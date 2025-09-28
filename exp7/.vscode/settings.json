@@ -1,0 +1,39 @@
+{
+    // 使用Verible作为主要的Language Server
+    "systemverilog.languageServer": "verible",
+    "systemverilog.verible.path": "/opt/homebrew/bin/verible-verilog-ls",
+    "systemverilog.verible.arguments": [
+        "--indentation_spaces=4",
+        "--include_dir_path=myCPU",
+        "--include_dir_path=func/include"
+    ],
+    // 同时保持Verilator作为linter（双重检查）
+    "verilog.linting.linter": "verilator",
+    "verilog.linting.verilator.arguments": "--lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSED -Wno-UNOPTFLAT -Wno-WIDTH -I${workspaceFolder}/myCPU -I${workspaceFolder}/func/include --top-module mycpu_top",
+    "verilog.linting.verilator.runAtFileLocation": false,
+    "verilog.linting.verilator.useWSL": false,
+    // 其他有用的Verilog设置
+    "verilog.ctags.path": "ctags",
+    "verilog.logging.enabled": true,
+    "verilog.trace.server": "verbose",
+    // 文件关联
+    "files.associations": {
+        "*.v": "verilog",
+        "*.vh": "verilog",
+        "*.sv": "systemverilog"
+    },
+    // LSP相关设置 - 修复索引配置
+    "systemverilog.includeIndexing": [
+        "**/*.{v,vh,sv,svh}"
+    ],
+    "systemverilog.excludeIndexing": "**/obj/**",
+    // 启用符号搜索精度
+    "systemverilog.documentSymbolsPrecision": "full",
+    "systemverilog.workspaceSymbolsPrecision": "full",
+    // 启用详细日志以便调试
+    "systemverilog.trace.server": "verbose",
+    // 强制重新索引和模块搜索
+    "systemverilog.compilerType": "Verilator",
+    "systemverilog.launchConfiguration": "verilator --sv --lint-only --Wall",
+    "systemverilog.formatCommand": "verible-verilog-format"
+}

@@ -48,3 +48,51 @@ generate for (i=0; i<64; i=i+1) begin : gen_for_dec_6_64
 end endgenerate
 
 endmodule
+
+module pipeline(
+    input  wire clk, rst,
+    input  wire allowout, // -->? [next_stage]
+    input  wire validin,  // valid? ---> [stage]
+    input  wire readygo,  // [stage] -->?
+    output wire validout, // [stage] --> valid?
+    output wire allowin,  // --->? [stage]
+    output reg  valid   // [stage?]
+);
+
+    assign allowin = ~valid | (readygo & allowout);
+    assign validout = valid & readygo;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            valid <= 1'b0;
+        end else if (allowin) begin
+            valid <= validin;
+        end
+    end
+endmodule
+
+module cancelable_pipeline(
+    input  wire clk, rst,
+    input  wire allowout, // -->? [next_stage]
+    input  wire validin,  // valid? ---> [stage]
+    input  wire readygo,  // [stage] -->?
+    input  wire cancel,   // cancel current stage, do not allow it to come out.
+    output wire validout, // [stage] --> valid?
+    output wire allowin,  // --->? [stage]
+    output reg  valid   // [stage?]
+);
+
+    assign allowin = ~valid | (readygo & allowout);
+    assign validout = valid & readygo & ~cancel;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            valid <= 1'b0;
+        end else if (allowin) begin
+            valid <= validin;
+        end else if (cancel) begin
+            valid <= 1'b0;
+        end
+    end
+endmodule
+
