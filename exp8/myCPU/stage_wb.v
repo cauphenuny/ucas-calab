@@ -19,7 +19,7 @@ module stage_wb(
     input  wire [31:0] input_rf_wdata,
 
     output wire [ 4:0] output_rf_waddr,
-    output wire [ 3:0] output_rf_we,
+    output wire        output_rf_we,
     output wire [31:0] output_rf_wdata,
 
     // I/O
@@ -46,7 +46,7 @@ module stage_wb(
             rf_waddr <= 5'h0;
             rf_we <= 1'b0;
             rf_wdata <= 32'h0;
-        end else if (allowin && validin) begin
+        end else if (pipl.flushing) begin
             pc <= input_pc;
             rf_waddr <= input_rf_waddr;
             rf_we <= input_rf_we;

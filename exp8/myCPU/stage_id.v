@@ -50,7 +50,7 @@ module stage_id(
             pc <= 32'h0;
             inst <= 32'h0;
         end
-        else if (allowin && validin) begin
+        else if (pipl.flushing) begin
             pc <= input_pc;
             inst <= input_inst;
         end
@@ -246,7 +246,7 @@ module stage_id(
     assign output_alu_op    = alu_op;
     assign output_rf_waddr  = dest;
     assign output_rf_we     = gr_we;
-    assign output_br_taken  = br_taken;
+    assign output_br_taken  = br_taken & ~stall; // when stall, can not take br_taken
     assign output_br_target = br_target;
     assign output_mem_data  = rkd_value;
     assign output_mem_read  = inst_ld_w;

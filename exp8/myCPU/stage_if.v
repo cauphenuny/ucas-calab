@@ -22,7 +22,8 @@ module stage_if(
 
     cancelable_pipeline pipl(
         .clk(clk), .rst(rst),
-        .allowout(allowout), .validin(validin),
+        .allowout(allowout),
+        .validin(validin & (~cancel)),
         .readygo(1'b1),
         .cancel(cancel),
         .validout(validout), .allowin(allowin), 

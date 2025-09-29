@@ -69,6 +69,8 @@ module pipeline(
             valid <= validin;
         end
     end
+
+    wire flushing = validin & allowin;
 endmodule
 
 module cancelable_pipeline(
@@ -94,5 +96,7 @@ module cancelable_pipeline(
             valid <= 1'b0;
         end
     end
+
+    wire flushing = validin & allowin;
 endmodule
 

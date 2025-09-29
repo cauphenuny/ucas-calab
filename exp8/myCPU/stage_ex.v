@@ -31,7 +31,7 @@ module stage_ex(
     output wire [31:0] output_alu_result, // alu_result
 
     // I/O
-    output wire [ 4:0] data_sram_we,
+    output wire [ 3:0] data_sram_we,
     output wire [31:0] data_sram_addr,
     output wire [31:0] data_sram_wdata
 );
@@ -58,7 +58,7 @@ module stage_ex(
             alu_src2 <= 32'h0;
             alu_op   <= 12'h0;
         end
-        else if (allowin && validin) begin
+        else if (pipl.flushing) begin
             alu_src1 <= input_alu_src1;
             alu_src2 <= input_alu_src2;
             alu_op   <= input_alu_op;
@@ -76,20 +76,18 @@ module stage_ex(
 
 /**************** hold trace data ****************/
 
-    localparam TRACE_HOLD_WIDTH = 32;
-
-    reg [TRACE_HOLD_WIDTH-1:0] trace_regs;
+    reg [31:0] pc;
 
     always @(posedge clk) begin
         if (rst) begin
-            trace_regs <= {TRACE_HOLD_WIDTH{1'b0}};
+            pc <= 32'h0;
         end
-        else if (allowin && validin) begin
-            trace_regs <= {input_pc};
+        else if (pipl.flushing) begin
+            pc <= input_pc;
         end
     end
 
-    assign {output_pc} = trace_regs;
+    assign output_pc = pc;
 
 /**************** hold memory stage data ****************/
 
@@ -102,7 +100,7 @@ module stage_ex(
             mem_write <= 1'b0;
             mem_data <= 32'h0;
         end
-        else if (allowin && validin) begin
+        else if (pipl.flushing) begin
             mem_read <= input_mem_read;
             mem_write <= input_mem_write;
             mem_data <= input_mem_data;
@@ -127,7 +125,7 @@ module stage_ex(
         if (rst) begin
             wb_regs <= {WB_HOLD_WIDTH{1'b0}};
         end
-        else if (allowin && validin) begin
+        else if (pipl.flushing) begin
             wb_regs <= {input_rf_waddr, input_rf_we};
         end
     end

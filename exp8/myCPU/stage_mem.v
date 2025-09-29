@@ -48,7 +48,7 @@ module stage_mem(
             mem_read   <= 1'b0;
             alu_result <= 32'h0;
         end
-        else if (allowin && validin) begin
+        else if (pipl.flushing) begin
             mem_read   <= input_mem_read;
             alu_result <= input_alu_result;
         end
@@ -60,20 +60,18 @@ module stage_mem(
 
 /**************** hold trace data ****************/
 
-    localparam TRACE_HOLD_WIDTH = 32; //$bits(input_pc);
-
-    reg [TRACE_HOLD_WIDTH-1:0] trace_regs;
+    reg [31:0] pc;
 
     always @(posedge clk) begin
         if (rst) begin
-            trace_regs <= {TRACE_HOLD_WIDTH{1'b0}};
+            pc <= 32'h0;
         end
-        else if (allowin && validin) begin
-            trace_regs <= {input_pc};
+        else if (pipl.flushing) begin
+            pc <= input_pc;
         end
     end
 
-    assign {output_pc} = trace_regs;
+    assign output_pc = pc;
 
 /**************** hold write-back stage data ****************/
 
@@ -86,7 +84,7 @@ module stage_mem(
         if (rst) begin
             wb_regs <= {WB_HOLD_WIDTH{1'b0}};
         end
-        else if (allowin && validin) begin
+        else if (pipl.flushing) begin
             wb_regs <= {input_rf_waddr, input_rf_we};
         end
     end

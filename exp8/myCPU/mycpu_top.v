@@ -36,18 +36,20 @@ module mycpu_top(
 
     wire [31:0] nextpc, seq_pc, br_target;
     reg  [31:0] pc;
-    wire br_taken;
+    wire br_taken, flushing;
+    wire if_allowin, if_validin;
+    assign if_validin = valid;
 
-    assign seq_pc       = pc + 3'h4;
-    assign nextpc       = br_taken ? br_target : seq_pc;
+    assign flushing      = if_allowin & if_validin;
+    assign seq_pc        = pc + 3'h4;
+    assign nextpc        = br_taken ? br_target : seq_pc;
 
     assign inst_sram_addr = nextpc;
 
     always @(posedge clk) begin
         if (rst) begin
-            pc <= 32'h1bfffffc;     //trick: to make nextpc be 0x1c000000 during rst
-        end
-        else begin
+            pc <= 32'h1c000000;
+        end else if (flushing) begin
             pc <= nextpc;
         end
     end
@@ -67,18 +69,16 @@ module mycpu_top(
         .wdata  (rf_wdata )
     );
 
-    wire if_allowin;
-
     /* verilator lint_off PINCONNECTEMPTY */
 
     stage_if u_stage_if(
         .clk(clk),
         .rst(rst),
-        .validin(valid),
+        .validin(if_validin),
         .allowin(if_allowin),
         .validout(),
         .allowout(),
-        .cancel(1'b0),
+        .cancel(br_taken),
 
         .input_pc(pc),
         .output_pc(),
@@ -88,6 +88,8 @@ module mycpu_top(
         .inst_sram_rdata(inst_sram_rdata)
     );
 
+    wire id_stall;
+
     stage_id u_stage_id(
         .clk(clk),
         .rst(rst),
@@ -95,7 +97,7 @@ module mycpu_top(
         .allowin(u_stage_if.allowout),
         .validout(),
         .allowout(),
-        .stall(1'b0),
+        .stall(id_stall),
 
         .rf_raddr1(rf_raddr1),
         .rf_raddr2(rf_raddr2),
@@ -204,11 +206,24 @@ module mycpu_top(
         .rf_wdata(rf_wdata)
     );
 
+    wire conflict1 =
+        rf_raddr1 == 5'h0 ? 0 :
+        (u_stage_ex.valid && u_stage_ex.output_rf_we && (u_stage_ex.output_rf_waddr == rf_raddr1)) || 
+        (u_stage_mem.valid && u_stage_mem.output_rf_we && (u_stage_mem.output_rf_waddr == rf_raddr1)) || 
+        (u_stage_wb.valid && u_stage_wb.output_rf_we && (u_stage_wb.output_rf_waddr == rf_raddr1));
+    wire conflict2 =
+        rf_raddr2 == 5'h0 ? 0 :
+        (u_stage_ex.valid && u_stage_ex.output_rf_we && (u_stage_ex.output_rf_waddr == rf_raddr2)) || 
+        (u_stage_mem.valid && u_stage_mem.output_rf_we && (u_stage_mem.output_rf_waddr == rf_raddr2)) || 
+        (u_stage_wb.valid && u_stage_wb.output_rf_we && (u_stage_wb.output_rf_waddr == rf_raddr2));
+
+    assign id_stall = conflict1 || conflict2;
+
     /* verilator lint_on PINCONNECTEMPTY */
 
     assign data_sram_en = 1'h1;
     assign inst_sram_we = 4'h0;
-    assign inst_sram_en = 1'h1;
+    assign inst_sram_en = rst | flushing;
     assign inst_sram_wdata = 32'h0;
 
     assign debug_wb_pc       = wb_pc;
