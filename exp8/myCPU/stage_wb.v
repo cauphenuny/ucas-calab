@@ -46,7 +46,7 @@ module stage_wb(
             rf_waddr <= 5'h0;
             rf_we <= 1'b0;
             rf_wdata <= 32'h0;
-        end else if (pipl.flushing) begin
+    end else if (pipl.refreshing) begin
             pc <= input_pc;
             rf_waddr <= input_rf_waddr;
             rf_we <= input_rf_we;

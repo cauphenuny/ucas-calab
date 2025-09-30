@@ -48,7 +48,7 @@ module stage_mem(
             mem_read   <= 1'b0;
             alu_result <= 32'h0;
         end
-        else if (pipl.flushing) begin
+        else if (pipl.refreshing) begin
             mem_read   <= input_mem_read;
             alu_result <= input_alu_result;
         end
@@ -66,7 +66,7 @@ module stage_mem(
         if (rst) begin
             pc <= 32'h0;
         end
-        else if (pipl.flushing) begin
+        else if (pipl.refreshing) begin
             pc <= input_pc;
         end
     end
@@ -84,7 +84,7 @@ module stage_mem(
         if (rst) begin
             wb_regs <= {WB_HOLD_WIDTH{1'b0}};
         end
-        else if (pipl.flushing) begin
+        else if (pipl.refreshing) begin
             wb_regs <= {input_rf_waddr, input_rf_we};
         end
     end

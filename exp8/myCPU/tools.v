@@ -70,33 +70,34 @@ module pipeline(
         end
     end
 
-    wire flushing = validin & allowin;
+  wire refreshing = validin & allowin;
 endmodule
 
-module cancelable_pipeline(
-    input  wire clk, rst,
-    input  wire allowout, // -->? [next_stage]
-    input  wire validin,  // valid? ---> [stage]
-    input  wire readygo,  // [stage] -->?
-    input  wire cancel,   // cancel current stage, do not allow it to come out.
-    output wire validout, // [stage] --> valid?
+module cancelable_pipeline (
+    input wire clk,
+    rst,
+    input wire allowout,  // -->? [next_stage]
+    input wire validin,  // valid? ---> [stage]
+    input wire readygo,  // [stage] -->?
+    input wire cancel,  // cancel current stage, do not allow it to come out.
+    output wire validout,  // [stage] --> valid?
     output wire allowin,  // --->? [stage]
-    output reg  valid   // [stage?]
+    output reg valid  // [stage?]
 );
 
-    assign allowin = ~valid | (readygo & allowout);
-    assign validout = valid & readygo & ~cancel;
+  assign allowin  = ~valid | (readygo & allowout);
+  assign validout = valid & readygo & ~cancel;
 
-    always @(posedge clk) begin
-        if (rst) begin
-            valid <= 1'b0;
-        end else if (allowin) begin
-            valid <= validin;
-        end else if (cancel) begin
-            valid <= 1'b0;
-        end
+  always @(posedge clk) begin
+    if (rst) begin
+      valid <= 1'b0;
+    end else if (allowin) begin
+      valid <= validin;
+    end else if (cancel) begin
+      valid <= 1'b0;
     end
+  end
 
-    wire flushing = validin & allowin;
+  wire refreshing = validin & allowin;
 endmodule
 

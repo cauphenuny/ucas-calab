@@ -36,11 +36,11 @@ module mycpu_top(
 
     wire [31:0] nextpc, seq_pc, br_target;
     reg  [31:0] pc;
-    wire br_taken, flushing;
+    wire br_taken, if_refreshing;
     wire if_allowin, if_validin;
     assign if_validin = valid;
 
-    assign flushing      = if_allowin & if_validin;
+    assign if_refreshing = if_allowin & if_validin;
     assign seq_pc        = pc + 3'h4;
     assign nextpc        = br_taken ? br_target : seq_pc;
 
@@ -49,7 +49,7 @@ module mycpu_top(
     always @(posedge clk) begin
         if (rst) begin
             pc <= 32'h1c000000;
-        end else if (flushing) begin
+        end else if (if_refreshing) begin
             pc <= nextpc;
         end
     end
@@ -223,7 +223,7 @@ module mycpu_top(
 
     assign data_sram_en = 1'h1;
     assign inst_sram_we = 4'h0;
-    assign inst_sram_en = rst | flushing;
+    assign inst_sram_en = rst | if_refreshing;
     assign inst_sram_wdata = 32'h0;
 
     assign debug_wb_pc       = wb_pc;

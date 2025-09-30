@@ -5,7 +5,7 @@ module stage_if(
     // pipeline control
     input  wire allowout, validin,
     output wire allowin, validout,
-    input  wire cancel, // cancel current inst in reg, do not cancel flushing inst.
+    input  wire cancel, // cancel current inst in reg, do not cancel refreshing inst.
 
     // pipeline data
     input  wire [31:0] input_pc,
@@ -32,14 +32,14 @@ module stage_if(
 
     reg [31:0] pc, inst;
 
-    wire flushing = allowin && validin;
+    wire refreshing = allowin && validin;
 
     always @(posedge clk) begin
         if (rst) begin
             pc <= 32'h0;
             inst <= 32'h0;
         end
-        else if (flushing) begin
+        else if (refreshing) begin
             pc <= input_pc;
             inst <= inst_sram_rdata;
         end

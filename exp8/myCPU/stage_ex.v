@@ -58,7 +58,7 @@ module stage_ex(
             alu_src2 <= 32'h0;
             alu_op   <= 12'h0;
         end
-        else if (pipl.flushing) begin
+        else if (pipl.refreshing) begin
             alu_src1 <= input_alu_src1;
             alu_src2 <= input_alu_src2;
             alu_op   <= input_alu_op;
@@ -82,7 +82,7 @@ module stage_ex(
         if (rst) begin
             pc <= 32'h0;
         end
-        else if (pipl.flushing) begin
+        else if (pipl.refreshing) begin
             pc <= input_pc;
         end
     end
@@ -100,7 +100,7 @@ module stage_ex(
             mem_write <= 1'b0;
             mem_data <= 32'h0;
         end
-        else if (pipl.flushing) begin
+        else if (pipl.refreshing) begin
             mem_read <= input_mem_read;
             mem_write <= input_mem_write;
             mem_data <= input_mem_data;
@@ -125,7 +125,7 @@ module stage_ex(
         if (rst) begin
             wb_regs <= {WB_HOLD_WIDTH{1'b0}};
         end
-        else if (pipl.flushing) begin
+        else if (pipl.refreshing) begin
             wb_regs <= {input_rf_waddr, input_rf_we};
         end
     end

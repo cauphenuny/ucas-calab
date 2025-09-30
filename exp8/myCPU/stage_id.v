@@ -50,7 +50,7 @@ module stage_id(
             pc <= 32'h0;
             inst <= 32'h0;
         end
-        else if (pipl.flushing) begin
+        else if (pipl.refreshing) begin
             pc <= input_pc;
             inst <= input_inst;
         end
