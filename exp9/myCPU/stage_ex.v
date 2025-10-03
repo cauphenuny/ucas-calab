@@ -30,6 +30,10 @@ module stage_ex(
     input  wire [11:0] input_alu_op,
     output wire [31:0] output_alu_result, // alu_result
 
+    // ...data forwarded to ID stage of next inst
+    output wire [31:0] forward_data,
+    output wire        forward_ready,
+
     // I/O
     output wire [ 3:0] data_sram_we,
     output wire [31:0] data_sram_addr,
@@ -73,6 +77,8 @@ module stage_ex(
     );
 
     assign output_alu_result = alu_result;
+    assign forward_data = alu_result;
+    assign forward_ready = ~output_mem_read; // NOTE: not ready only if needs to read memory
 
 /**************** hold trace data ****************/
 

@@ -26,7 +26,7 @@ module stage_if(
         .validin(validin & (~cancel)),
         .readygo(1'b1),
         .cancel(cancel),
-        .validout(validout), .allowin(allowin), 
+        .validout(validout), .allowin(allowin),
         .valid(valid)
     );
 

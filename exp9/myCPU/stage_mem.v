@@ -24,6 +24,10 @@ module stage_mem(
 
     output wire [31:0] output_rf_wdata,
 
+    // ...data forwarded to ID stage of next inst
+    output wire [31:0] forward_data,
+    output wire        forward_ready,
+
     // I/O
     input  wire [31:0] data_sram_rdata
 );
@@ -34,7 +38,7 @@ module stage_mem(
         .clk(clk), .rst(rst),
         .allowout(allowout), .validin(validin),
         .readygo(1'b1),
-        .validout(validout), .allowin(allowin), 
+        .validout(validout), .allowin(allowin),
         .valid(valid)
     );
 
@@ -57,6 +61,8 @@ module stage_mem(
     wire [31:0] mem_rdata = data_sram_rdata;
 
     assign output_rf_wdata = mem_read ? mem_rdata : alu_result;
+    assign forward_data = output_rf_wdata;
+    assign forward_ready = 1'b1;
 
 /**************** hold trace data ****************/
 

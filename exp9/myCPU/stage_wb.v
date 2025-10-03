@@ -22,6 +22,10 @@ module stage_wb(
     output wire        output_rf_we,
     output wire [31:0] output_rf_wdata,
 
+    // ...data forwarded to ID stage of next inst
+    output wire [31:0] forward_data,
+    output wire        forward_ready,
+
     // I/O
     output reg        rf_we,
     output reg [ 4:0] rf_waddr,
@@ -29,7 +33,7 @@ module stage_wb(
 );
 
     wire valid;
-    
+
     pipeline pipl(
         .clk(clk), .rst(rst),
         .allowout(allowout), .validin(validin),
@@ -58,5 +62,8 @@ module stage_wb(
     assign output_rf_waddr = rf_waddr;
     assign output_rf_wdata = rf_wdata;
     assign output_rf_we = rf_we;
+
+    assign forward_data = rf_wdata;
+    assign forward_ready = 1'b1;
 
 endmodule
