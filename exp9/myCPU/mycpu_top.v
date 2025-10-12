@@ -36,11 +36,11 @@ module mycpu_top(
 
     wire [31:0] nextpc, seq_pc, br_target;
     reg  [31:0] pc;
-    wire br_taken, if_refreshing;
-    wire if_allowin;
-    wire if_validin = valid;
+    wire br_taken, id_refreshing;
+    wire if_allowout;
+    wire if_validout = valid;
 
-    assign if_refreshing = if_allowin & if_validin;
+    assign id_refreshing = if_allowout & if_validout;
     assign seq_pc        = pc + 32'h4;
     assign nextpc        = br_taken ? br_target : seq_pc;
 
@@ -51,7 +51,7 @@ module mycpu_top(
     always @(posedge clk) begin
         if (rst) begin
             pc <= ENTRYPOINT;
-        end else if (if_refreshing) begin
+        end else if (id_refreshing) begin
             pc <= nextpc;
         end
     end
@@ -74,23 +74,6 @@ module mycpu_top(
 
     /* verilator lint_off PINCONNECTEMPTY */
     /* verilator lint_off ASSIGNIN */
-
-    stage_if u_stage_if(
-        .clk(clk),
-        .rst(rst),
-        .validin(if_validin),
-        .allowin(if_allowin),
-        .validout(),
-        .allowout(),
-        .cancel(br_taken),
-
-        .input_pc(pc),
-        .output_pc(),
-        .output_inst(),
-
-        // .inst_sram_addr(inst_sram_addr),
-        .inst_sram_rdata(inst_sram_rdata)
-    );
 
     wire ex_wen = u_stage_ex.valid && u_stage_ex.output_rf_we && u_stage_ex.output_rf_waddr != 5'h0;
     wire mem_wen = u_stage_mem.valid && u_stage_mem.output_rf_we && u_stage_mem.output_rf_waddr != 5'h0;
@@ -134,8 +117,8 @@ module mycpu_top(
     stage_id u_stage_id(
         .clk(clk),
         .rst(rst),
-        .validin(u_stage_if.validout),
-        .allowin(u_stage_if.allowout),
+        .validin(~br_taken & if_validout),
+        .allowin(if_allowout),
         .validout(),
         .allowout(),
         .stall(id_stall),
@@ -145,8 +128,8 @@ module mycpu_top(
         .rf_rdata1(rf_rdata1),
         .rf_rdata2(rf_rdata2),
 
-        .input_pc(u_stage_if.output_pc),
-        .input_inst(u_stage_if.output_inst),
+        .input_pc(pc),
+        .input_inst(inst_sram_rdata),
 
         .output_pc(),
         .output_br_target(br_target),
@@ -261,7 +244,7 @@ module mycpu_top(
 
     assign data_sram_en = 1'h1;
     assign inst_sram_we = 4'h0;
-    assign inst_sram_en = rst | if_refreshing;
+    assign inst_sram_en = rst | id_refreshing;
     assign inst_sram_wdata = 32'h0;
 
     assign debug_wb_pc       = wb_pc;
