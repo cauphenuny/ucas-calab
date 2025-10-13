@@ -1,0 +1,297 @@
+% 这是中国科学院大学计算机科学与技术专业《计算机组成原理（研讨课）》使用的实验报告 Latex 模板
+% 本模板与 2024 年 2 月 Jun-xiong Ji 完成, 更改自由 Shing-Ho Lin 和 Jun-Xiong Ji 于 2022 年 9 月共同完成的基础物理实验模板
+% 如有任何问题, 请联系: jijunxoing21@mails.ucas.ac.cn
+% This is the LaTeX template for report of Experiment of Computer Organization and Design courses, based on its provided Word template. 
+% This template is completed on Febrary 2024, based on the joint collabration of Shing-Ho Lin and Junxiong Ji in September 2022. 
+% Adding numerous pictures and equations leads to unsatisfying experience in Word. Therefore LaTeX is better. 
+% Feel free to contact me via: jijunxoing21@mails.ucas.ac.cn
+
+\documentclass[11pt]{article}
+
+\input{preamble.tex}
+
+\begin{document}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%改这里可以修改实验报告表头的信息
+\newcommand{\name}{袁晨圃}
+\newcommand{\studentNum}{2023K8009929012}
+\newcommand{\major}{计算机科学与技术}
+\newcommand{\labNum}{7,8,9}
+\newcommand{\labName}{流水线CPU设计}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\input{head.tex}
+
+\section{逻辑电路结构与仿真波形的截图及说明}
+
+\subsection{实验8}
+
+\subsubsection{处理器的结构设计框图}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{figures/exp8.png}
+    \caption{exp8 处理器结构}
+    \label{fig:exp8}
+\end{figure}
+
+\subsubsection{关键部件设计}
+
+\noindent $\bullet$
+\textbf{流水线控制模块}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{figures/pipe.png}
+    \caption{流水线示意图}
+    \label{fig:pipeline}
+\end{figure}
+
+如图所示，每一级流水线都需要实现一组流水线控制信号，这对于不同流水级而言是重复代码，因此我选择例化一个流水线模块，负责生成流水线信号。
+
+这样做方便对于流水线功能的统一维护。
+
+\begin{lstlisting}
+module pipeline(
+    input  wire clk, rst,
+    input  wire allowout, // -->? [next_stage]
+    input  wire validin,  // valid? ---> [stage]
+    input  wire readygo,  // [stage] -->?
+    output wire validout, // [stage] --> valid?
+    output wire allowin,  // --->? [stage]
+    output reg  valid   // [stage?]
+);
+
+    assign allowin = ~valid | (readygo & allowout);
+    assign validout = valid & readygo;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            valid <= 1'b0;
+        end else if (allowin) begin
+            valid <= validin;
+        end
+    end
+    wire refreshing = validin & allowin;
+endmodule
+\end{lstlisting}
+
+\verb|validin, allowin| 是与前一级交互的数据
+
+\verb|validout, allowout| 是与后一级交互的数据
+
+当前流水级的 \verb|valid| 信号表示当前流水级是否有有效数据
+
+\verb|readygo| 信号表示当前流水级是否准备好将数据传递到下一级，由外部传入，然后流水线模块根据readygo信号生成 \verb|allowin| 和 \verb|validout|.
+
+\verb|refreshing| 信号表示当前流水级和前一级握手成功，刷新当前流水级数据
+
+\vspace{1ex} \noindent $\bullet$
+\textbf{冲突检测模块}
+
+\begin{lstlisting}
+    wire conflict1 =
+        rf_raddr1 == 5'h0 ? 0 :
+        (u_stage_ex.valid && u_stage_ex.output_rf_we && (u_stage_ex.output_rf_waddr == rf_raddr1)) || 
+        (u_stage_mem.valid && u_stage_mem.output_rf_we && (u_stage_mem.output_rf_waddr == rf_raddr1)) || 
+        (u_stage_wb.valid && u_stage_wb.output_rf_we && (u_stage_wb.output_rf_waddr == rf_raddr1));
+    wire conflict2 =
+        rf_raddr2 == 5'h0 ? 0 :
+        (u_stage_ex.valid && u_stage_ex.output_rf_we && (u_stage_ex.output_rf_waddr == rf_raddr2)) || 
+        (u_stage_mem.valid && u_stage_mem.output_rf_we && (u_stage_mem.output_rf_waddr == rf_raddr2)) || 
+        (u_stage_wb.valid && u_stage_wb.output_rf_we && (u_stage_wb.output_rf_waddr == rf_raddr2));
+
+    assign id_stall = conflict1 || conflict2;
+\end{lstlisting}
+
+根据后三个流水级的写地址以及写地址跟ID流水级读地址的比较，判断是否存在数据冒险，然后阻塞IF和ID流水级
+
+\subsection{实验9}
+
+\subsubsection{处理器的结构设计框图}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{figures/exp9.png}
+    \caption{加入了前递模块的处理器结构}
+    \label{fig:exp9}
+\end{figure}
+
+\subsubsection{关键部件设计}
+
+\noindent $\bullet$
+\textbf{数据前递模块}
+
+功能：分析后三个流水级的写地址以及写使能信号，判断是否需要前递数据，在ID流水级生成前递后的寄存器读数据。
+
+\begin{lstlisting}
+    wire hazard_ex1 = ex_wen && (u_stage_ex.output_rf_waddr == rf_raddr1);
+    wire hazard_ex2 = ex_wen && (u_stage_ex.output_rf_waddr == rf_raddr2);
+    wire hazard_mem1 = mem_wen && (u_stage_mem.output_rf_waddr == rf_raddr1);
+    wire hazard_mem2 = mem_wen && (u_stage_mem.output_rf_waddr == rf_raddr2);
+    wire hazard_wb1 = wb_wen && (u_stage_wb.output_rf_waddr == rf_raddr1);
+    wire hazard_wb2 = wb_wen && (u_stage_wb.output_rf_waddr == rf_raddr2);
+    wire [31:0] ex_forward_data;
+    wire [31:0] mem_forward_data;
+    wire [31:0] wb_forward_data;
+    wire ex_forward_ready;
+    wire mem_forward_ready;
+    wire wb_forward_ready;
+
+    assign rf_rdata1 = hazard_ex1 ? ex_forward_data :
+                       hazard_mem1 ? mem_forward_data :
+                       hazard_wb1 ? wb_forward_data :
+                       raw_rf_rdata1;
+
+    assign rf_rdata2 = hazard_ex2 ? ex_forward_data :
+                       hazard_mem2 ? mem_forward_data :
+                       hazard_wb2 ? wb_forward_data :
+                       raw_rf_rdata2;
+
+    wire id_stall1 = hazard_ex1 ? ~ex_forward_ready :
+                     hazard_mem1 ? ~mem_forward_ready :
+                     hazard_wb1 ? ~wb_forward_ready :
+                     1'b0;
+
+    wire id_stall2 = hazard_ex2 ? ~ex_forward_ready :
+                     hazard_mem2 ? ~mem_forward_ready :
+                     hazard_wb2 ? ~wb_forward_ready :
+                     1'b0;
+
+    wire id_stall = id_stall1 | id_stall2;
+\end{lstlisting}
+
+这些 \verb|*_wen| 信号是比较 tricky 的地方。
+
+由于对 0 寄存器的写数据不应该前递，我直接让 \verb|ex_wen|,\verb|mem_wen|,\verb|wb_wen| 在 写地址为 0 时为 0。
+
+直观的理解：写地址为 0 时其实相当于没有写寄存器，因此不需要前递。
+
+\begin{lstlisting}
+    wire ex_wen = u_stage_ex.valid && u_stage_ex.output_rf_we && u_stage_ex.output_rf_waddr != 5'h0;
+    wire mem_wen = u_stage_mem.valid && u_stage_mem.output_rf_we && u_stage_mem.output_rf_waddr != 5'h0;
+    wire wb_wen = u_stage_wb.valid && u_stage_wb.output_rf_we && u_stage_wb.output_rf_waddr != 5'h0;
+\end{lstlisting}
+
+为了一般性考虑，我为每一个流水级都设置了一个 forward_ready 信号，表示当前流水级的前递数据是否准备好。当前设计中，forward_ready 信号只会在 load 指令处在 EX 级时为 0 （因为需要等待到MEM级获取内存数据），其他情况均为 1.
+
+随着设计的复杂，forward_ready 信号可能会包含更复杂的逻辑，这里提前预留好重构的接口，增加逻辑只需要改对应流水级的 forward_ready 信号生成逻辑即可。
+
+EX, MEM, WB 前递的 data 分别来自于 EX 级的 ALU 结果，MEM 级的 ALU 结果或内存读数据，WB 级的写回数据。
+
+\begin{lstlisting}
+// in stage-ex:
+    assign forward_data = alu_result;
+    assign forward_ready = ~output_mem_read; // NOTE: not ready only if needs to read memory
+// in stage-mem:
+    assign output_rf_wdata = mem_read ? mem_rdata : alu_result;
+    assign forward_data = output_rf_wdata;
+    assign forward_ready = 1'b1;
+// in stage-wb:
+    assign forward_data = rf_wdata;
+    assign forward_ready = 1'b1;
+\end{lstlisting}
+
+\subsubsection{前递功能效果展示}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/exp8-benchmark.png}
+    \caption{exp8 运行时间：1367295 ns}
+    \label{fig:exp8-benchmark}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/exp9-benchmark.png}
+    \caption{exp9 运行时间：604585 ns}
+    \label{fig:exp9-benchmark}
+\end{figure}
+
+
+\section{实验过程中遇到的问题、对问题的思考过程及解决方法}
+
+
+\noindent
+$\bullet$
+\textbf{取指阶段对于同步RAM时序的理解问题}
+
+\textbf{问题复现}:
+
+\begin{lstlisting}
+(bug on 2097 ns)
+/* source asm code */
+1c000000 <_start>:
+kernel_entry():
+1c000000:	02bffc0c 	addi.w	$r12,$r0,-1(0xfff)
+1c000004:	02bffc0c 	addi.w	$r12,$r0,-1(0xfff)
+1c000008:	50fff800 	b	65528(0xfff8) # 1c010000 <locate>
+
+/* buggy instruments fetched by IF stage */
+00000: 02bfffc0c
+00004: 02bfffc0c
+00008: 02bfffc0c
+\end{lstlisting}
+
+分析了一下当前的代码逻辑，总结时序如下：
+
+\begin{lstlisting}
+cycle0:
+	input_pc => pc
+	inst_sram_raddr = input_pc
+	inst_sram_rdata => inst
+
+cycle1:
+	output_pc = pc	
+	output_inst = inst
+\end{lstlisting}
+
+可以看到，其实还是相当于异步ram了，同步ram的话应该把 inst_addr 输出放在 IF 级之前
+
+\begin{lstlisting}
+cycle0:
+	next_pc = br_taken ? br_target : (preIF.pc + 4)
+	inst_addr = next_pc
+	next_pc => preIF.pc
+cycle1:
+	preIF.pc => IF.pc
+	inst_data => IF.inst // get inst data after one cycle
+cycle2:
+	IF.output_pc = IF.pc
+	IF.output_inst = IF.inst
+\end{lstlisting}
+
+思考：这样的话 IF 流水级本身不保存指令地址，要求 ram 在没有新请求之前保持原来的值，否则流水线阻塞的时候会不会有问题？
+
+解决方案：控制 Inst SRAM 的 \verb|ce| 信号，只有当有指令进入 ID 级时才拉高 \verb|ce|，同时向 Inst SRAM 传递的指令地址是 \verb|next_pc|，ID 级直接从 inst_sram_rdata 读取指令。
+
+\begin{lstlisting}
+    always @(posedge clk) begin
+        if (rst) begin
+            pc <= ENTRYPOINT;
+        end else if (id_refreshing) begin
+            pc <= nextpc;
+        end
+    end
+    assign inst_sram_en = rst | id_refreshing;
+\end{lstlisting}
+
+这样可以保证 PC 和 inst_sram_rdata 的值始终是对应的。
+
+\verb|id_refreshing = if.validout & id.allowin|，如图 \cref{fig:exp9} 所示。
+
+\vspace{1ex}
+\noindent
+$\bullet$
+\textbf{br_taken 设置问题}
+
+id_stall 时不能拉高 br_taken，因为此时读取的值还不对。
+
+\section{实验所耗时间}
+
+\newcommand{\labTime}{10}
+
+在课后，花费了大约\underline{\makebox[5em][c]{\labTime}}小时完成此次实验。
+
+\end{document}

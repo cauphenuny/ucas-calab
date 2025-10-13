@@ -3,3 +3,11 @@
 **/.DS_Store
 **/.hdl_checker
 **/upload/
+**/tmp/
+**/*.synctex.gz
+**/*.aux
+**/*.fdb_latexmk
+**/*.fls
+**/*.log
+**/*.xdv
+report-template/*.pdf

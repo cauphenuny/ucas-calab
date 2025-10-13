@@ -33,7 +33,7 @@ module stage_id(
 
     wire valid;
 
-    pipeline pipl(
+    pipeline pipe(
         .clk(clk), .rst(rst),
         .allowout(allowout), .validin(validin),
         .readygo(~stall), // stall when waiting for prev inst write back
@@ -50,7 +50,7 @@ module stage_id(
             pc <= 32'h0;
             inst <= 32'h0;
         end
-        else if (pipl.refreshing) begin
+        else if (pipe.refreshing) begin
             pc <= input_pc;
             inst <= input_inst;
         end

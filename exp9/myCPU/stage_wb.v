@@ -34,23 +34,26 @@ module stage_wb(
 
     wire valid;
 
-    pipeline pipl(
-        .clk(clk), .rst(rst),
-        .allowout(allowout), .validin(validin),
-        .readygo(1'b1),
-        .validout(validout), .allowin(allowin),
-        .valid(valid)
-    );
+  pipeline pipe (
+      .clk(clk),
+      .rst(rst),
+      .allowout(allowout),
+      .validin(validin),
+      .readygo(1'b1),
+      .validout(validout),
+      .allowin(allowin),
+      .valid(valid)
+  );
 
-    reg [31:0] pc;
+  reg [31:0] pc;
 
-    always @(posedge clk) begin
-        if (rst) begin
-            pc <= 32'h0;
-            rf_waddr <= 5'h0;
-            rf_we <= 1'b0;
-            rf_wdata <= 32'h0;
-    end else if (pipl.refreshing) begin
+  always @(posedge clk) begin
+    if (rst) begin
+      pc <= 32'h0;
+      rf_waddr <= 5'h0;
+      rf_we <= 1'b0;
+      rf_wdata <= 32'h0;
+    end else if (pipe.refreshing) begin
             pc <= input_pc;
             rf_waddr <= input_rf_waddr;
             rf_we <= input_rf_we;
