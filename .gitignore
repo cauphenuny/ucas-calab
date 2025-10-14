@@ -11,3 +11,4 @@
 **/*.log
 **/*.xdv
 report-template/*.pdf
+**/*.zip

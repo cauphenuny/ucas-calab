@@ -209,6 +209,36 @@ EX, MEM, WB 前递的 data 分别来自于 EX 级的 ALU 结果，MEM 级的 ALU
     \label{fig:exp9-benchmark}
 \end{figure}
 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/exp8-wave.png}
+    \caption{exp8 CPU 波形}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/exp9-wave.png}
+    \caption{exp9 CPU 波形}
+\end{figure}
+
+对应代码：
+
+\begin{lstlisting}
+1c000000 <_start>:
+kernel_entry():
+1c000000:	02bffc0c 	addi.w	$r12,$r0,-1(0xfff)
+1c000004:	02bffc0c 	addi.w	$r12,$r0,-1(0xfff)
+1c000008:	50fff800 	b	65528(0xfff8) # 1c010000 <locate>
+1c00000c:	1500000c 	lu12i.w	$r12,-524288(0x80000)
+1c000010:	028005ad 	addi.w	$r13,$r13,1(0x1)
+1c000014:	0015018e 	move	$r14,$r12
+1c000018:	00104a2f 	add.w	$r15,$r17,$r18
+1c00001c:	28800190 	ld.w	$r16,$r12,0
+\end{lstlisting}
+
+可见前递功能显著提升了 CPU 的性能。
+
+
 
 \section{实验过程中遇到的问题、对问题的思考过程及解决方法}
 
