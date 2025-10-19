@@ -33,11 +33,12 @@ module stage_mem(
 );
 
     wire valid;
+    wire readygo = 1'b1;
 
     pipeline pipe(
         .clk(clk), .rst(rst),
         .allowout(allowout), .validin(validin),
-        .readygo(1'b1),
+        .readygo(readygo),
         .validout(validout), .allowin(allowin),
         .valid(valid)
     );
@@ -62,7 +63,7 @@ module stage_mem(
 
     assign output_rf_wdata = mem_read ? mem_rdata : alu_result;
     assign forward_data = output_rf_wdata;
-    assign forward_ready = 1'b1;
+    assign forward_ready = readygo;
 
 /**************** hold trace data ****************/
 

@@ -33,13 +33,14 @@ module stage_wb(
 );
 
     wire valid;
+    wire readygo = 1'b1;
 
     pipeline pipe (
         .clk(clk),
         .rst(rst),
         .allowout(allowout),
         .validin(validin),
-        .readygo(1'b1),
+        .readygo(readygo),
         .validout(validout),
         .allowin(allowin),
         .valid(valid)
@@ -67,6 +68,6 @@ module stage_wb(
     assign output_rf_we = rf_we;
 
     assign forward_data = rf_wdata;
-    assign forward_ready = 1'b1;
+    assign forward_ready = readygo;
 
 endmodule

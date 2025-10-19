@@ -17,7 +17,7 @@ module stage_id(
     output wire        output_br_taken,
 
     output wire [31:0] output_alu_src1, output_alu_src2,
-    output wire [11:0] output_alu_op,
+    output wire [18:0] output_alu_op,
 
     output wire [31:0] output_mem_data, // addr: alu_result
     output wire        output_mem_read,
@@ -122,6 +122,14 @@ module stage_id(
     wire        inst_beq;
     wire        inst_bne;
     wire        inst_lu12i_w;
+    wire        inst_mul_w;
+    wire        inst_mulh_w;
+    wire        inst_mulh_wu;
+    wire        inst_pcaddu12i;
+    wire        inst_div_w;
+    wire        inst_div_wu;
+    wire        inst_mod_w;
+    wire        inst_mod_wu;
 
     wire        need_ui5;
     wire        need_si12;
@@ -133,7 +141,7 @@ module stage_id(
 
     wire [31:0] alu_src1;
     wire [31:0] alu_src2;
-    wire [14:0] alu_op;
+    wire [18:0] alu_op;
 
 /**************** decoder ****************/
 
@@ -173,6 +181,10 @@ module stage_id(
     assign inst_mul_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b11000];
     assign inst_mulh_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b11001];
     assign inst_mulh_wu = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b11010];
+    assign inst_div_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00000];
+    assign inst_mod_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00001];
+    assign inst_div_wu  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00010];
+    assign inst_mod_wu  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00011];
 
     assign inst_slti   = op_31_26_d[6'h00] & op_25_22_d[4'b1000];
     assign inst_sltui  = op_31_26_d[6'h00] & op_25_22_d[4'b1001];
@@ -193,7 +205,7 @@ module stage_id(
     assign inst_pcaddu12i = op_31_26_d[6'b000111] & ~inst[25];
 
     assign alu_op[ 0] = inst_add_w | inst_addi_w | inst_ld_w | inst_st_w
-                        | inst_jirl | inst_bl;
+                        | inst_jirl | inst_bl | inst_pcaddu12i;
     assign alu_op[ 1] = inst_sub_w;
     assign alu_op[ 2] = inst_slt | inst_slti;
     assign alu_op[ 3] = inst_sltu | inst_sltui;
@@ -208,6 +220,10 @@ module stage_id(
     assign alu_op[12] = inst_mul_w;
     assign alu_op[13] = inst_mulh_w;
     assign alu_op[14] = inst_mulh_wu;
+    assign alu_op[15] = inst_div_w;
+    assign alu_op[16] = inst_div_wu;
+    assign alu_op[17] = inst_mod_w;
+    assign alu_op[18] = inst_mod_wu;
 
     assign need_ui5   =  inst_slli_w | inst_srli_w | inst_srai_w;
     assign need_si12  =  inst_addi_w | inst_ld_w | inst_st_w | inst_slti | inst_sltui;
