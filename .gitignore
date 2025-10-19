@@ -1,4 +1,10 @@
-**/soc_verify/
+**/soc_verify/*
+!**/soc_verify/
+!**/soc_verify/*
+**/soc_verify/*/*
+!**/soc_verify/*/run_vivado/
+**/soc_verify/*/run_vivado/*
+!**/soc_verify/*/run_vivado/*.tcl
 **/xvlog*
 **/.DS_Store
 **/.hdl_checker
