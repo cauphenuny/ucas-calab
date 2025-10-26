@@ -140,7 +140,9 @@ module mycpu_top(
 
         .output_mem_data(),
         .output_mem_read(),
+        .output_mem_op_ld(),
         .output_mem_write(),
+        .output_mem_op_st(),
 
         .output_rf_waddr(),
         .output_rf_we()
@@ -164,7 +166,9 @@ module mycpu_top(
 
         .input_mem_data(u_stage_id.output_mem_data),
         .input_mem_read(u_stage_id.output_mem_read),
+        .input_mem_op_ld(u_stage_id.output_mem_op_ld),
         .input_mem_write(u_stage_id.output_mem_write),
+        .input_mem_op_st(u_stage_id.output_mem_op_st),
 
         .output_pc(),
         .output_rf_waddr(),
@@ -201,6 +205,7 @@ module mycpu_top(
         .input_alu_result(u_stage_ex.output_alu_result),
 
         .forward_data(mem_forward_data),
+        .input_mem_op_ld(u_stage_ex.output_mem_op_ld),
         .forward_ready(mem_forward_ready),
 
         .data_sram_rdata(data_sram_rdata)

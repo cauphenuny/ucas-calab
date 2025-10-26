@@ -21,7 +21,9 @@ module stage_id(
 
     output wire [31:0] output_mem_data, // addr: alu_result
     output wire        output_mem_read,
+    output wire [4:0]  output_mem_op_ld,
     output wire        output_mem_write,
+    output wire [2:0]  output_mem_op_st,
 
     output wire [ 4:0] output_rf_waddr,
     output wire        output_rf_we,
@@ -88,6 +90,8 @@ module stage_id(
     wire [31:0] rj_value;
     wire [31:0] rkd_value;
     wire        rj_eq_rd;
+    wire        rj_lt_rd;
+    wire        rj_ult_rd;
 
     wire [63:0] op_31_26_d;
     wire [15:0] op_25_22_d;
@@ -115,12 +119,22 @@ module stage_id(
     wire        inst_ori;
     wire        inst_xori;
     wire        inst_ld_w;
+    wire        inst_ld_b;
+    wire        inst_ld_h;
+    wire        inst_ld_bu;
+    wire        inst_ld_hu;
+    wire        inst_st_b;
+    wire        inst_st_h;
     wire        inst_st_w;
     wire        inst_jirl;
     wire        inst_b;
     wire        inst_bl;
     wire        inst_beq;
     wire        inst_bne;
+    wire        inst_blt;
+    wire        inst_bge;
+    wire        inst_bltu;
+    wire        inst_bgeu;
     wire        inst_lu12i_w;
     wire        inst_mul_w;
     wire        inst_mulh_w;
@@ -193,18 +207,29 @@ module stage_id(
     assign inst_ori    = op_31_26_d[6'h00] & op_25_22_d[4'b1110];
     assign inst_xori   = op_31_26_d[6'h00] & op_25_22_d[4'b1111];
 
+    assign inst_ld_b   = op_31_26_d[6'h0a] & op_25_22_d[4'h0];
+    assign inst_ld_h   = op_31_26_d[6'h0a] & op_25_22_d[4'h1];
+    assign inst_ld_bu  = op_31_26_d[6'h0a] & op_25_22_d[4'h8];
+    assign inst_ld_hu  = op_31_26_d[6'h0a] & op_25_22_d[4'h9];
     assign inst_ld_w   = op_31_26_d[6'h0a] & op_25_22_d[4'h2];
+    assign inst_st_b   = op_31_26_d[6'h0a] & op_25_22_d[4'h4];
+    assign inst_st_h   = op_31_26_d[6'h0a] & op_25_22_d[4'h5];
     assign inst_st_w   = op_31_26_d[6'h0a] & op_25_22_d[4'h6];
     assign inst_jirl   = op_31_26_d[6'h13];
     assign inst_b      = op_31_26_d[6'h14];
     assign inst_bl     = op_31_26_d[6'h15];
     assign inst_beq    = op_31_26_d[6'h16];
     assign inst_bne    = op_31_26_d[6'h17];
+    assign inst_blt    = op_31_26_d[6'h18];
+    assign inst_bge    = op_31_26_d[6'h19];
+    assign inst_bltu   = op_31_26_d[6'h1a];
+    assign inst_bgeu   = op_31_26_d[6'h1b];
 
     assign inst_lu12i_w   = op_31_26_d[6'b000101] & ~inst[25];
     assign inst_pcaddu12i = op_31_26_d[6'b000111] & ~inst[25];
 
-    assign alu_op[ 0] = inst_add_w | inst_addi_w | inst_ld_w | inst_st_w
+    assign alu_op[ 0] = inst_add_w | inst_addi_w| inst_ld_b | inst_ld_h
+                        | inst_ld_bu | inst_ld_hu | inst_ld_w | inst_st_b | inst_st_h | inst_st_w
                         | inst_jirl | inst_bl | inst_pcaddu12i;
     assign alu_op[ 1] = inst_sub_w;
     assign alu_op[ 2] = inst_slt | inst_slti;
@@ -226,9 +251,10 @@ module stage_id(
     assign alu_op[18] = inst_mod_wu;
 
     assign need_ui5   =  inst_slli_w | inst_srli_w | inst_srai_w;
-    assign need_si12  =  inst_addi_w | inst_ld_w | inst_st_w | inst_slti | inst_sltui;
+    assign need_si12  =  inst_addi_w | inst_ld_b | inst_ld_h | inst_ld_bu 
+                        | inst_ld_hu | inst_ld_w | inst_st_b | inst_st_h | inst_st_w | inst_slti | inst_sltui;
     assign need_ui12  =  inst_andi | inst_ori | inst_xori;
-    assign need_si16  =  inst_jirl | inst_beq | inst_bne;
+    assign need_si16  =  inst_jirl | inst_beq | inst_bne | inst_blt | inst_bge | inst_bltu | inst_bgeu;
     assign need_si20  =  inst_lu12i_w | inst_pcaddu12i;
     assign need_si26  =  inst_b | inst_bl;
     assign src2_is_4  =  inst_jirl | inst_bl;
@@ -243,7 +269,8 @@ module stage_id(
 
     assign jirl_offs = {{14{i16[15]}}, i16[15:0], 2'b0};
 
-    assign src_reg_is_rd = inst_beq | inst_bne | inst_st_w;
+    assign src_reg_is_rd = inst_beq | inst_bne | inst_st_b | inst_st_h | inst_st_w | inst_blt
+                         | inst_bge | inst_bltu | inst_bgeu;
 
     assign src1_is_pc    = inst_jirl | inst_bl | inst_pcaddu12i;
 
@@ -251,7 +278,13 @@ module stage_id(
                          | inst_srli_w
                          | inst_srai_w
                          | inst_addi_w
+                         | inst_ld_b
+                         | inst_ld_h
+                         | inst_ld_bu
+                         | inst_ld_hu
                          | inst_ld_w
+                         | inst_st_b
+                         | inst_st_h
                          | inst_st_w
                          | inst_lu12i_w
                          | inst_pcaddu12i
@@ -264,11 +297,12 @@ module stage_id(
                          | inst_xori
                          ;
 
-    assign res_from_mem  = inst_ld_w;
+    assign res_from_mem  = inst_ld_b | inst_ld_h | inst_ld_bu | inst_ld_hu | inst_ld_w;
     assign dst_is_r1     = inst_bl;
 
-    assign gr_we         = ~inst_st_w & ~inst_beq & ~inst_bne & ~inst_b;
-    assign mem_we        = inst_st_w;
+    assign gr_we         = ~inst_st_b & ~inst_st_h & ~inst_st_w & ~inst_beq & ~inst_bne & ~inst_b & ~inst_blt
+                           & ~inst_bge & ~inst_bltu & ~inst_bgeu;
+    assign mem_we        = inst_st_b | inst_st_h | inst_st_w;
     assign dest          = dst_is_r1 ? 5'd1 : rd;
 
     assign rf_raddr1 = rj;
@@ -278,13 +312,22 @@ module stage_id(
     assign rkd_value = rf_rdata2;
 
     assign rj_eq_rd = (rj_value == rkd_value);
+    assign rj_lt_rd = $signed(rj_value) < $signed(rkd_value);
+    assign rj_ult_rd = $unsigned(rj_value) < $unsigned(rkd_value);
+
     assign br_taken = (   inst_beq  &&  rj_eq_rd
                     || inst_bne  && !rj_eq_rd
+                    || inst_blt  &&  rj_lt_rd
+                    || inst_bge  && !rj_lt_rd
+                    || inst_bltu &&  rj_ult_rd
+                    || inst_bgeu && !rj_ult_rd
                     || inst_jirl
                     || inst_bl
                     || inst_b
                     ) && valid;
-    assign br_target = (inst_beq || inst_bne || inst_bl || inst_b) ? (pc + br_offs) :
+    assign br_target = (inst_beq || inst_bne || inst_blt 
+                        || inst_bge || inst_bltu || inst_bgeu 
+                        || inst_bl || inst_b) ? (pc + br_offs) :
                                                     /*inst_jirl*/ (rj_value + jirl_offs);
 
     assign alu_src1 = src1_is_pc  ? pc[31:0] : rj_value;
@@ -301,7 +344,9 @@ module stage_id(
     assign output_br_taken  = br_taken & ~stall; // when stall, can not take br_taken
     assign output_br_target = br_target;
     assign output_mem_data  = rkd_value;
-    assign output_mem_read  = inst_ld_w;
-    assign output_mem_write = inst_st_w;
+    assign output_mem_read  = inst_ld_b | inst_ld_h | inst_ld_bu | inst_ld_hu | inst_ld_w;
+    assign output_mem_op_ld = {inst_ld_b, inst_ld_h, inst_ld_bu, inst_ld_hu, inst_ld_w};
+    assign output_mem_write = inst_st_b | inst_st_h | inst_st_w;
+    assign output_mem_op_st = {inst_st_b, inst_st_h, inst_st_w};
 
 endmodule

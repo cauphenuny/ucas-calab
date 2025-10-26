@@ -22,8 +22,11 @@ module stage_ex(
     // ....data held for MEM stage
     input  wire [31:0] input_mem_data,
     input  wire        input_mem_read,
+    input  wire [4:0]  input_mem_op_ld,
     input  wire        input_mem_write,
+    input  wire [2:0]  input_mem_op_st,
     output wire        output_mem_read,
+    output wire [4:0]  output_mem_op_ld,
 
     // ....data processed in EX stage
     input  wire [31:0] input_alu_src1, input_alu_src2,
@@ -167,26 +170,43 @@ module stage_ex(
 /**************** hold memory stage data ****************/
 
     reg         mem_read, mem_write;
+    reg         op_st_b, op_st_h, op_st_w;
+    reg [4:0]   mem_op_ld;
     reg [31:0]  mem_data;
 
     always @(posedge clk) begin
         if (rst) begin
             mem_read <= 1'b0;
+            mem_op_ld <= 5'b0;
             mem_write <= 1'b0;
+            {op_st_b, op_st_h, op_st_w} <= 3'b0;
             mem_data <= 32'h0;
         end
         else if (pipe.refreshing) begin
             mem_read <= input_mem_read;
+            mem_op_ld <= input_mem_op_ld;
             mem_write <= input_mem_write;
+            {op_st_b, op_st_h, op_st_w} <= input_mem_op_st;
             mem_data <= input_mem_data;
         end
     end
 
-    assign data_sram_we    = {4{mem_write}};
-    assign data_sram_addr  = alu_output;
-    assign data_sram_wdata = mem_data;
+    assign data_sram_we    = op_st_w ? 4'b1111
+                             : op_st_h ? (alu_result[1] ? 4'b1100 : 4'b0011)
+                             : op_st_b ? (alu_result[1:0] == 2'b00 ? 4'b0001
+                                         : alu_result[1:0] == 2'b01 ? 4'b0010
+                                         : alu_result[1:0] == 2'b10 ? 4'b0100
+                                         : alu_result[1:0] == 2'b11 ? 4'b1000
+                                         : 4'b0000)
+                             : 4'b0000;
+    assign data_sram_addr  = alu_result;
+    assign data_sram_wdata = op_st_b ? {4{mem_data[7:0]}}
+                             : op_st_h ? {2{mem_data[15:0]}}
+                             : op_st_w ? mem_data
+                             : 32'h0;
 
     assign output_mem_read = mem_read;
+    assign output_mem_op_ld = mem_op_ld;
 
 /**************** hold write-back stage data ****************/
 
