@@ -311,9 +311,13 @@ module stage_id(
     assign rj_value  = rf_rdata1;
     assign rkd_value = rf_rdata2;
 
-    assign rj_eq_rd = (rj_value == rkd_value);
-    assign rj_lt_rd = $signed(rj_value) < $signed(rkd_value);
-    assign rj_ult_rd = $unsigned(rj_value) < $unsigned(rkd_value);
+    comparator u_comparator (
+        .a(rj_value),
+        .b(rkd_value),
+        .a_eq_b(rj_eq_rd),
+        .a_lt_b_signed(rj_lt_rd),
+        .a_lt_b_unsigned(rj_ult_rd)
+    );
 
     assign br_taken = (   inst_beq  &&  rj_eq_rd
                     || inst_bne  && !rj_eq_rd

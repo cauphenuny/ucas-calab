@@ -101,3 +101,25 @@ module cancelable_pipeline (
   wire refreshing = validin & allowin;
 endmodule
 
+// An optimized comparator module
+module comparator(
+    input  wire [31:0] a,
+    input  wire [31:0] b,
+
+    output wire a_eq_b,
+    output wire a_lt_b_signed,
+    output wire a_lt_b_unsigned
+);
+
+    assign a_eq_b = (a == b);
+
+    // For signed comparison, check the sign bits first.
+    wire a_sign = a[31];
+    wire b_sign = b[31];
+
+    assign a_lt_b_signed = (a_sign & ~b_sign) | ((a_sign == b_sign) & (a < b));
+
+    // For unsigned comparison, the default Verilog operator is already optimal.
+    assign a_lt_b_unsigned = (a < b);
+
+endmodule
