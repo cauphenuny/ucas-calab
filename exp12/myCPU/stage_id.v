@@ -6,6 +6,7 @@ module stage_id(
     input  wire allowout, validin,
     output wire allowin, validout,
     input  wire stall,
+    input  wire cancel,
 
     // pipeline data
     input  wire [31:0] input_pc,
@@ -28,6 +29,26 @@ module stage_id(
     output wire [ 4:0] output_rf_waddr,
     output wire        output_rf_we,
 
+    // CSR bundle for WB
+    output wire        output_csr_en,
+    output wire [13:0] output_csr_num,
+    output wire        output_csr_we,
+    output wire [31:0] output_csr_wmask,
+    output wire [31:0] output_csr_wvalue,
+
+    // CSR value/flag
+    input  wire [31:0] csr_rvalue,
+    output wire        output_is_csr,
+    output wire [31:0] output_csr_rvalue,
+
+    // ERTN flag
+    output wire        output_is_ertn,
+
+    // exception info
+    output wire        output_ex_valid,
+    output wire [ 5:0] output_ecode,
+    output wire [ 8:0] output_esubcode,
+
     // I/O
     input  wire [31:0] rf_rdata1, rf_rdata2,
     output wire [ 4:0] rf_raddr1, rf_raddr2
@@ -35,10 +56,11 @@ module stage_id(
 
     wire valid;
 
-    pipeline pipe(
+    cancelable_pipeline pipe(
         .clk(clk), .rst(rst),
         .allowout(allowout), .validin(validin),
         .readygo(~stall), // stall when waiting for prev inst write back
+        .cancel(cancel),
         .validout(validout), .allowin(allowin),
         .valid(valid)
     );
@@ -156,6 +178,14 @@ module stage_id(
     wire [31:0] alu_src1;
     wire [31:0] alu_src2;
     wire [18:0] alu_op;
+    // syscall/CSR/ERTN detect
+    wire        inst_syscall;
+    wire        inst_ertn;
+    wire        inst_csrrd, inst_csrwr, inst_csrxchg;
+    wire        ex_valid;
+    wire [5:0]  ex_ecode;
+    wire [8:0]  ex_esubcode;
+    wire        is_csr;
 
 /**************** decoder ****************/
 
@@ -228,6 +258,15 @@ module stage_id(
     assign inst_lu12i_w   = op_31_26_d[6'b000101] & ~inst[25];
     assign inst_pcaddu12i = op_31_26_d[6'b000111] & ~inst[25];
 
+    assign inst_syscall = (inst[31:15] == 17'b00000000001010110);
+    assign inst_ertn = (inst == 32'h06483800);
+
+    wire is_csr_op = (inst[31:24] == 8'h04);
+    assign inst_csrrd   = is_csr_op & (inst[9:5]  == 5'b00000);
+    assign inst_csrwr   = is_csr_op & (inst[9:5]  == 5'b00001);
+    assign inst_csrxchg = is_csr_op & (inst[9:5]  != 5'b00000) & (inst[9:5] != 5'b00001);
+    assign is_csr       = (inst_csrrd | inst_csrwr | inst_csrxchg) & valid;
+
     assign alu_op[ 0] = inst_add_w | inst_addi_w| inst_ld_b | inst_ld_h
                         | inst_ld_bu | inst_ld_hu | inst_ld_w | inst_st_b | inst_st_h | inst_st_w
                         | inst_jirl | inst_bl | inst_pcaddu12i;
@@ -270,7 +309,8 @@ module stage_id(
     assign jirl_offs = {{14{i16[15]}}, i16[15:0], 2'b0};
 
     assign src_reg_is_rd = inst_beq | inst_bne | inst_st_b | inst_st_h | inst_st_w | inst_blt
-                         | inst_bge | inst_bltu | inst_bgeu;
+                         | inst_bge | inst_bltu | inst_bgeu
+                         | inst_csrwr | inst_csrxchg;
 
     assign src1_is_pc    = inst_jirl | inst_bl | inst_pcaddu12i;
 
@@ -300,8 +340,9 @@ module stage_id(
     assign res_from_mem  = inst_ld_b | inst_ld_h | inst_ld_bu | inst_ld_hu | inst_ld_w;
     assign dst_is_r1     = inst_bl;
 
-    assign gr_we         = ~inst_st_b & ~inst_st_h & ~inst_st_w & ~inst_beq & ~inst_bne & ~inst_b & ~inst_blt
-                           & ~inst_bge & ~inst_bltu & ~inst_bgeu;
+    assign gr_we         = (~inst_st_b & ~inst_st_h & ~inst_st_w & ~inst_beq & ~inst_bne & ~inst_b & ~inst_blt
+                           & ~inst_bge & ~inst_bltu & ~inst_bgeu & ~inst_syscall & ~inst_ertn)
+                           | (inst_csrrd | inst_csrwr | inst_csrxchg);
     assign mem_we        = inst_st_b | inst_st_h | inst_st_w;
     assign dest          = dst_is_r1 ? 5'd1 : rd;
 
@@ -337,6 +378,24 @@ module stage_id(
     assign alu_src1 = src1_is_pc  ? pc[31:0] : rj_value;
     assign alu_src2 = src2_is_imm ? imm : rkd_value;
 
+/**************** exception detect & output ****************/
+    // Only syscall in exp12
+    assign ex_valid    = inst_syscall & valid;
+    assign ex_ecode    = 6'h0b; // SYS
+    assign ex_esubcode = 9'h0;
+
+/**************** CSR/ERTN outputs ****************/
+    wire [13:0] csr_num_imm = inst[23:10];
+    wire        csr_en = is_csr;
+    wire        csr_do_write = (inst_csrwr | inst_csrxchg) & valid;
+    // csrxchg: wmask = rj_value, wvalue = rd_value(rkd_value)
+    // csrwr  : wmask = all-1,  wvalue = rd_value(rkd_value)
+    // csrrd  : no write
+    wire [31:0] csr_wmask = inst_csrxchg ? rf_rdata1
+                             : inst_csrwr ? 32'hffff_ffff
+                             : 32'h0;
+    wire [31:0] csr_wvalue = (inst_csrwr | inst_csrxchg) ? rkd_value : 32'h0;
+
 /**************** output ****************/
 
     assign output_pc        = pc;
@@ -345,6 +404,17 @@ module stage_id(
     assign output_alu_op    = alu_op;
     assign output_rf_waddr  = dest;
     assign output_rf_we     = gr_we;
+    assign output_ex_valid  = ex_valid;
+    assign output_ecode     = ex_ecode;
+    assign output_esubcode  = ex_esubcode;
+    assign output_csr_en    = csr_en;
+    assign output_csr_num   = csr_num_imm;
+    assign output_csr_we    = csr_do_write;
+    assign output_csr_wmask = csr_wmask;
+    assign output_csr_wvalue= csr_wvalue;
+    assign output_is_csr    = is_csr;
+    assign output_csr_rvalue= csr_rvalue;
+    assign output_is_ertn   = inst_ertn & valid;
     assign output_br_taken  = br_taken & ~stall; // when stall, can not take br_taken
     assign output_br_target = br_target;
     assign output_mem_data  = rkd_value;

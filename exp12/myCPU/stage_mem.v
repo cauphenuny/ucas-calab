@@ -5,6 +5,7 @@ module stage_mem(
     // pipeline control
     input  wire allowout, validin,
     output wire allowin, validout,
+    input  wire cancel,
 
     // pipeline data
 
@@ -29,6 +30,36 @@ module stage_mem(
     output wire [31:0] forward_data,
     output wire        forward_ready,
 
+    // exception info
+    input  wire        input_ex_valid,
+    input  wire [ 5:0] input_ecode,
+    input  wire [ 8:0] input_esubcode,
+    output wire        output_ex_valid,
+    output wire [ 5:0] output_ecode,
+    output wire [ 8:0] output_esubcode,
+
+    // CSR bundle
+    input  wire        input_csr_en,
+    input  wire [13:0] input_csr_num,
+    input  wire        input_csr_we,
+    input  wire [31:0] input_csr_wmask,
+    input  wire [31:0] input_csr_wvalue,
+    output wire        output_csr_en,
+    output wire [13:0] output_csr_num,
+    output wire        output_csr_we,
+    output wire [31:0] output_csr_wmask,
+    output wire [31:0] output_csr_wvalue,
+
+    // ERTN flag
+    input  wire        input_is_ertn,
+    output wire        output_is_ertn,
+
+    // CSR flag/value
+    input  wire        input_is_csr,
+    input  wire [31:0] input_csr_rvalue,
+    output wire        output_is_csr,
+    output wire [31:0] output_csr_rvalue,
+
     // I/O
     input  wire [31:0] data_sram_rdata
 );
@@ -36,10 +67,11 @@ module stage_mem(
     wire valid;
     wire readygo = 1'b1;
 
-    pipeline pipe(
+    cancelable_pipeline pipe(
         .clk(clk), .rst(rst),
         .allowout(allowout), .validin(validin),
         .readygo(readygo),
+        .cancel(cancel),
         .validout(validout), .allowin(allowin),
         .valid(valid)
     );
@@ -82,6 +114,66 @@ module stage_mem(
     assign output_rf_wdata = mem_read ? mem_read_result : alu_result;
     assign forward_data = output_rf_wdata;
     assign forward_ready = readygo;
+
+/**************** exception info ****************/
+    reg        ex_valid_r;
+    reg [5:0]  ecode_r;
+    reg [8:0]  esubcode_r;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            ex_valid_r <= 1'b0;
+            ecode_r    <= 6'h0;
+            esubcode_r <= 9'h0;
+        end else if (pipe.refreshing) begin
+            ex_valid_r <= input_ex_valid;
+            ecode_r    <= input_ecode;
+            esubcode_r <= input_esubcode;
+        end
+    end
+
+    assign output_ex_valid  = ex_valid_r;
+    assign output_ecode     = ecode_r;
+    assign output_esubcode  = esubcode_r;
+
+/**************** CSR bundle & ERTN ****************/
+    reg        csr_en_r;
+    reg [13:0] csr_num_r;
+    reg        csr_we_r;
+    reg [31:0] csr_wmask_r;
+    reg [31:0] csr_wvalue_r;
+    reg        is_ertn_r;
+    reg        is_csr_r;
+    reg [31:0] csr_rvalue_r;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            csr_en_r    <= 1'b0;
+            csr_num_r   <= 14'h0;
+            csr_we_r    <= 1'b0;
+            csr_wmask_r <= 32'h0;
+            csr_wvalue_r<= 32'h0;
+            is_ertn_r   <= 1'b0;
+        end else if (pipe.refreshing) begin
+            csr_en_r    <= input_csr_en;
+            csr_num_r   <= input_csr_num;
+            csr_we_r    <= input_csr_we;
+            csr_wmask_r <= input_csr_wmask;
+            csr_wvalue_r<= input_csr_wvalue;
+            is_ertn_r   <= input_is_ertn;
+            is_csr_r    <= input_is_csr;
+            csr_rvalue_r<= input_csr_rvalue;
+        end
+    end
+
+    assign output_csr_en    = csr_en_r;
+    assign output_csr_num   = csr_num_r;
+    assign output_csr_we    = csr_we_r;
+    assign output_csr_wmask = csr_wmask_r;
+    assign output_csr_wvalue= csr_wvalue_r;
+    assign output_is_ertn   = is_ertn_r;
+    assign output_is_csr    = is_csr_r;
+    assign output_csr_rvalue= csr_rvalue_r;
 
 /**************** hold trace data ****************/
 
