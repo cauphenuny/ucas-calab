@@ -31,7 +31,7 @@ module stage_ex(
 
     // ....data processed in EX stage
     input  wire [31:0] input_alu_src1, input_alu_src2,
-    input  wire [18:0] input_alu_op,
+    input  wire [20:0] input_alu_op,
     output wire [31:0] output_alu_result, // alu_result
 
     // ...data forwarded to ID stage of next inst
@@ -89,7 +89,7 @@ module stage_ex(
     );
 
     reg [31:0] alu_src1, alu_src2;
-    reg [18:0] alu_op;
+    reg [20:0] alu_op;
     reg [31:0] alu_output_sav;
     wire [31:0] alu_output, alu_result;
     wire alu_output_valid, alu_request_valid;
@@ -157,7 +157,7 @@ module stage_ex(
         if (rst) begin
             alu_src1 <= 32'h0;
             alu_src2 <= 32'h0;
-            alu_op   <= 19'h0;
+            alu_op   <= 21'h0;
         end
         else if (pipe.refreshing) begin
             alu_src1 <= input_alu_src1;

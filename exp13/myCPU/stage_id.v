@@ -18,7 +18,7 @@ module stage_id(
     output wire        output_br_taken,
 
     output wire [31:0] output_alu_src1, output_alu_src2,
-    output wire [18:0] output_alu_op,
+    output wire [20:0] output_alu_op,
 
     output wire [31:0] output_mem_data, // addr: alu_result
     output wire        output_mem_read,
@@ -130,6 +130,7 @@ module stage_id(
     wire        src2_is_imm;
     wire        res_from_mem;
     wire        dst_is_r1;
+    wire        dst_is_rj;
     wire        gr_we;
     wire        mem_we;
     wire        src_reg_is_rd;
@@ -208,6 +209,8 @@ module stage_id(
     wire        inst_csrrd;
     wire        inst_csrwr;
     wire        inst_csrxchg;
+    wire        inst_rdtimel_w;
+    wire        inst_rdtimeh_w;
     wire        inst_rdcntvl_w;
     wire        inst_rdcntvh_w;
     wire        inst_rdcntid;
@@ -225,7 +228,7 @@ module stage_id(
 
     wire [31:0] alu_src1;
     wire [31:0] alu_src2;
-    wire [18:0] alu_op;
+    wire [20:0] alu_op;
 
     // syscall/CSR/ERTN detect
     wire        ex_valid;
@@ -312,8 +315,12 @@ module stage_id(
     assign inst_csrwr   = ~ex_valid_r & is_csr_op & (inst[9:5]  == 5'b00001);
     assign inst_csrxchg = ~ex_valid_r & is_csr_op & (inst[9:5]  != 5'b00000) & (inst[9:5] != 5'b00001);
 
-    assign inst_rdcntvl_w = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & inst[14:10] == 5'b11000;
-    assign inst_rdcntvh_w = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & inst[14:10] == 5'b11001;
+    assign inst_rdtimel_w = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & inst[14:10] == 5'b11000;
+    assign inst_rdtimeh_w = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & inst[14:10] == 5'b11001;
+
+    assign inst_rdcntvl_w = inst_rdtimel_w & (rj == 5'h0);
+    assign inst_rdcntvh_w = inst_rdtimeh_w & (rj == 5'h0);
+    assign inst_rdcntid   = inst_rdtimel_w & (rd == 5'h0);
 
     assign exception_ine = ~ex_valid_r      &
                            ~inst_add_w      & ~inst_sub_w       & ~inst_slt     & ~inst_sltu &
@@ -336,7 +343,10 @@ module stage_id(
     assign legal = ~ex_valid_r & ~exception_ine;
 
     wire is_csr_op = (inst[31:24] == 8'h04);
-    assign is_csr       = (inst_csrrd | inst_csrwr | inst_csrxchg) & valid;
+    assign is_csr       = valid & (
+                            inst_csrrd | inst_csrwr | inst_csrxchg |
+                            inst_rdcntid
+                        );
 
     assign alu_op[ 0] = inst_add_w | inst_addi_w| inst_ld_b | inst_ld_h
                         | inst_ld_bu | inst_ld_hu | inst_ld_w | inst_st_b | inst_st_h | inst_st_w
@@ -359,6 +369,8 @@ module stage_id(
     assign alu_op[16] = inst_div_wu;
     assign alu_op[17] = inst_mod_w;
     assign alu_op[18] = inst_mod_wu;
+    assign alu_op[19] = inst_rdcntvl_w;
+    assign alu_op[20] = inst_rdcntvh_w;
 
     assign need_ui5   =  inst_slli_w | inst_srli_w | inst_srai_w;
     assign need_si12  =  inst_addi_w | inst_ld_b | inst_ld_h | inst_ld_bu 
@@ -410,6 +422,7 @@ module stage_id(
 
     assign res_from_mem  = inst_ld_b | inst_ld_h | inst_ld_bu | inst_ld_hu | inst_ld_w;
     assign dst_is_r1     = inst_bl;
+    assign dst_is_rj     = inst_rdcntid;
 
     assign gr_we         = legal &
                            ~inst_st_b & ~inst_st_h & ~inst_st_w & ~inst_beq & ~inst_bne &
@@ -417,7 +430,7 @@ module stage_id(
                            ~inst_syscall & ~inst_ertn & ~inst_syscall;
 
     assign mem_we        = inst_st_b | inst_st_h | inst_st_w;
-    assign dest          = dst_is_r1 ? 5'd1 : rd;
+    assign dest          = dst_is_r1 ? 5'd1 : dst_is_rj ? rj : rd;
 
     assign rf_raddr1 = rj;
     assign rf_raddr2 = src_reg_is_rd ? rd :rk;
@@ -470,7 +483,9 @@ module stage_id(
                        ;
 
 /**************** CSR/ERTN outputs ****************/
-    wire [13:0] csr_num_imm = inst[23:10];
+    wire [13:0] csr_num_imm = {14{is_csr_op}} & inst[23:10]
+                            | {14{inst_rdcntid}} & `CSR_TID
+                            ;
     wire        csr_en = is_csr;
     wire        csr_do_write = (inst_csrwr | inst_csrxchg) & valid;
     // csrxchg: wmask = rj_value, wvalue = rd_value(rkd_value)

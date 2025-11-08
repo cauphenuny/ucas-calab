@@ -3,7 +3,7 @@
 module alu(
     input  wire        clk, rst,
     input  wire        alu_req_valid,
-    input  wire [18:0] alu_op,
+    input  wire [20:0] alu_op,
     input  wire [31:0] alu_src1,
     input  wire [31:0] alu_src2,
     output wire        alu_result_valid,
@@ -29,6 +29,8 @@ wire op_div;
 wire op_divu;
 wire op_mod;
 wire op_modu;
+wire op_cntl;
+wire op_cnth;
 
 // control code decomposition
 assign op_add   = alu_op[ 0];
@@ -50,12 +52,24 @@ assign op_div   = alu_op[15];
 assign op_divu  = alu_op[16];
 assign op_mod   = alu_op[17];
 assign op_modu  = alu_op[18];
+assign op_cntl  = alu_op[19];
+assign op_cnth  = alu_op[20];
 
 wire sdiv_enable = op_div | op_mod;
 wire udiv_enable = op_divu | op_modu;
 wire div_enable = sdiv_enable | udiv_enable;
 
 /****************** simple ALU operations ******************/
+
+reg [63:0] counter;
+
+always @(posedge clk) begin
+    if (rst) begin
+        counter <= 64'h0;
+    end else begin
+        counter <= counter + 1;
+    end
+end
 
 wire [31:0] add_sub_result;
 wire [31:0] slt_result;
@@ -190,6 +204,8 @@ assign alu_result = ({32{op_add|op_sub   }} & add_sub_result)
                   | ({32{op_divu         }} & udiv_quotient)
                   | ({32{op_mod          }} & sdiv_remainder)
                   | ({32{op_modu         }} & udiv_remainder)
+                  | ({32{op_cntl         }} & counter[31:0])
+                  | ({32{op_cnth         }} & counter[63:32])
                   ;
 
 /****************** state machine ******************/
