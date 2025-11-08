@@ -202,6 +202,7 @@ module mycpu_top(
     wire        mem_ex_valid;
     wire [5:0]  mem_ecode;
     wire [8:0]  mem_esubcode;
+    wire        wb_ex_valid;
 
     // CSR bundle
     wire        id_csr_en;
@@ -321,6 +322,7 @@ module mycpu_top(
         .output_rf_waddr(),
         .output_rf_we(),
         .output_mem_read(),
+        .output_mem_op_ld(),
         .output_alu_result(),
 
         .input_ex_valid(id_ex_valid),
@@ -472,7 +474,6 @@ module mycpu_top(
 
     assign data_sram_en = 1'h1;
     assign inst_sram_we = 4'h0;
-    assign inst_sram_en = rst | id_refreshing | flush;
     assign inst_sram_wdata = 32'h0;
 
     assign debug_wb_pc       = wb_pc;

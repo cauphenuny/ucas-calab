@@ -80,7 +80,10 @@ wire        adder_cout;
 assign adder_a   = alu_src1;
 assign adder_b   = (op_sub | op_slt | op_sltu) ? ~alu_src2 : alu_src2;  //src1 - src2 rj-rk
 assign adder_cin = (op_sub | op_slt | op_sltu) ? 1'b1      : 1'b0;
+
+/* verilator lint_off WIDTHEXPAND */
 assign {adder_cout, adder_result} = adder_a + adder_b + adder_cin;
+/* verilator lint_on WIDTHEXPAND */
 
 // ADD, SUB result
 assign add_sub_result = adder_result;
@@ -117,6 +120,8 @@ assign {_discard, mulh_result, mul_result} = $signed({~op_mulhu & alu_src1[31], 
 
 /****************** division unit ******************/
 
+/* verilator lint_off MODMISSING */
+
 wire sdiv_divisor_ready, sdiv_divisor_valid;
 wire sdiv_dividend_ready, sdiv_dividend_valid;
 wire sdiv_result_valid;
@@ -148,6 +153,8 @@ udiv u_udiv(
     .m_axis_dout_tdata({udiv_quotient, udiv_remainder}),
     .m_axis_dout_tvalid(udiv_result_valid)
 );
+
+/* verilator lint_on MODMISSING */
 
 // module udiv(aclk, s_axis_divisor_tvalid,
 //   s_axis_divisor_tready, s_axis_divisor_tdata, s_axis_dividend_tvalid,
