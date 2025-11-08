@@ -34,32 +34,61 @@ module mycpu_top(
         end
     end
 
+/**************** IF stage ****************/
+
     wire [31:0] nextpc, seq_pc, br_target;
     reg  [31:0] pc;
-    wire br_taken, id_refreshing;
-    wire flush = (wb_ex | ertn_flush);
-    wire if_allowout;
-    wire if_validout = valid;
+    wire        br_taken, id_refreshing;
+    wire        flush = (wb_ex | ertn_flush);
+    wire        if_allowout;
+    wire        if_validout = valid;
+    wire        if_ex_valid;
+    wire [ 5:0] if_ecode;
+    wire [ 8:0] if_esubcode;
+    wire        if_csr_en;
+    wire        if_csr_we;
+    wire [13:0] if_csr_num;
+    wire [31:0] if_csr_wmask;
+    wire [31:0] if_csr_wvalue;
+    reg         if_ex_adef; // ADEF exception
+    wire        if_next_ex_adef;
 
     assign id_refreshing = if_allowout & if_validout;
     assign seq_pc        = pc + 32'h4;
-
     assign nextpc        = ertn_flush ? ex_ra : (wb_ex ? ex_entry : (br_taken ? br_target : seq_pc));
+
+    assign if_next_ex_adef = nextpc[1:0] != 2'b00;
 
     localparam ENTRYPOINT = 32'h1c000000;
 
+    assign inst_sram_en = rst | ((id_refreshing | flush) & ~if_next_ex_adef);
     assign inst_sram_addr = rst ? ENTRYPOINT : nextpc;
 
     always @(posedge clk) begin
         if (rst) begin
             pc <= ENTRYPOINT;
+            if_ex_adef <= 1'b0;
         end else if (flush) begin
             // On exception/ERTN, override stall and update PC immediately
             pc <= nextpc;
+            if_ex_adef <= if_next_ex_adef;
         end else if (id_refreshing) begin
             pc <= nextpc;
+            if_ex_adef <= if_next_ex_adef;
         end
     end
+
+    assign if_ex_valid = if_ex_adef;
+    assign if_ecode = `ECODE_ADEF;
+    assign if_esubcode = `ESUBCODE_ADEF;
+
+    assign if_csr_en = 1'b0;
+    assign if_csr_num = `CSR_BADV;
+    assign if_csr_we = if_ex_adef;
+    assign if_csr_wmask = 32'hffff_ffff;
+    assign if_csr_wvalue = pc;
+
+/**************** other units ****************/
 
     wire [ 4:0] rf_raddr1, rf_raddr2, rf_waddr;
     wire [31:0] raw_rf_rdata1, raw_rf_rdata2, rf_wdata; // NOTE: raw_*: data directly outputed by RF
@@ -237,6 +266,16 @@ module mycpu_top(
 
         .output_rf_waddr(),
         .output_rf_we(),
+
+        .input_ex_valid(if_ex_valid),
+        .input_ecode(if_ecode),
+        .input_esubcode(if_esubcode),
+
+        .input_csr_en(if_csr_en),
+        .input_csr_num(if_csr_num),
+        .input_csr_we(if_csr_we),
+        .input_csr_wmask(if_csr_wmask),
+        .input_csr_wvalue(if_csr_wvalue),
 
         .output_csr_en(id_csr_en),
         .output_csr_num(id_csr_num),
