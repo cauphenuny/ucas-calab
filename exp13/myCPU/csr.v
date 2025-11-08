@@ -5,7 +5,12 @@
 `define CSR_ERA     14'h006
 `define CSR_EENTRY  14'h00c
 `define CSR_SAVE(n) (14'h030 + n)
-`define CSR_TICLR   14'h044
+`define CSR_ECFG    14'h004 // Exception Configuration
+`define CSR_BADV    14'h007 // Bad Virtual Address
+`define CSR_TID     14'h040 // Timer ID
+`define CSR_TCFG    14'h041 // Timer Configuration
+`define CSR_TVAL    14'h042 // Timer Value
+`define CSR_TICLR   14'h044 // Timer Interrupt Clear
 
 // CSR fields
 `define CSR_CRMD_PLV    1:0
@@ -40,6 +45,18 @@
 
 `define CSR_SAVE_DATA   31:0
 
+`define CSR_ECFG_LIE 12:0
+`define CSR_ECFG_ZERO0 15:13
+`define CSR_ECFG_VS 18:16
+`define CSR_ECFG_ZERO1 31:19
+
+`define CSR_TCFG_EN 0
+`define CSR_TCFG_PERIOD 1
+`define CSR_TCFG_INIT 31:2
+
+`define CSR_TICLR_CLR 0
+`define CSR_TICLR_ZERO 31:1
+
 module csr(
     input  wire clk,
     input  wire rst,
@@ -68,9 +85,18 @@ module csr(
     reg [31:0]  csr_era;
     reg [31:0]  csr_eentry;
     reg [31:0]  csr_save_i [0:3];
+    reg [31:0]  csr_ecfg;
+    reg [31:0]  csr_badv;
+    reg [31:0]  csr_tid;
+    reg [31:0]  csr_tcfg;
+    wire [31:0] csr_tval;
+    wire [31:0] csr_ticlr;
 
-    wire [7:0]  hw_int_in  = 8'b0;   // temporarily set 0 for exp12
-    wire        ipi_int_in = 1'b0;
+    // In principle, these signal should from externel inputs, while in lab,
+    // we simulate it by setting fixed value.
+    wire [ 7:0] externel_hw_int  = 8'b0;
+    wire        externel_ipi_int = 1'b0;
+    wire [31:0] externel_coreid = 32'h0;
 
     // CRMD fields
     wire        crmd_rsel   = csr_rnum == `CSR_CRMD;
@@ -115,7 +141,7 @@ module csr(
     always @(posedge clk) begin
         // unused fields
         csr_prmd[`CSR_PRMD_PWE]  <= 1'b0;
-        csr_prmd[`CSR_PRMD_ZERO] <= 29'b0;
+        csr_prmd[`CSR_PRMD_ZERO] <= 28'b0;
 
         // PRMD.PPLV, PRMD.PIE
         if (wb_ex) begin
@@ -125,35 +151,6 @@ module csr(
         else if (csr_we && prmd_wsel) begin
             csr_prmd[`CSR_PRMD_PPLV] <= prmd_wdata[`CSR_PRMD_PPLV];
             csr_prmd[`CSR_PRMD_PIE]  <= prmd_wdata[`CSR_PRMD_PIE];
-        end
-    end
-
-    // ESTAT fields
-    wire        estat_rsel  = csr_rnum == `CSR_ESTAT;
-    wire        estat_wsel  = csr_wnum == `CSR_ESTAT;
-    wire [31:0] estat_wmask = estat_wsel ? csr_wmask : 32'b0;
-    wire [31:0] estat_wdata = estat_wmask & csr_wvalue | ~estat_wmask & csr_estat;
-
-    always @(posedge clk) begin
-        // unused fields
-        csr_estat[`CSR_ESTAT_ZERO1] <= 3'b0;
-        csr_estat[`CSR_ESTAT_ZERO2] <= 1'b0;
-
-        // ESTAT.IS
-        if (rst)
-            csr_estat[`CSR_ESTAT_IS_SWI] <= 2'b0;
-        else if (csr_we && estat_wsel)
-            csr_estat[`CSR_ESTAT_IS_SWI] <= estat_wdata[`CSR_ESTAT_IS_SWI];
-
-        csr_estat[`CSR_ESTAT_IS_HWI] <= hw_int_in;
-        csr_estat[`CSR_ESTAT_IS_PMI] <= 1'b0;
-        csr_estat[`CSR_ESTAT_IS_TI]  <= 1'b0; // timer interruption, temporarily set 0 for exp12
-        csr_estat[`CSR_ESTAT_IS_IPI] <= ipi_int_in;
-
-        // ESTAT.Ecode
-        if (wb_ex) begin
-            csr_estat[`CSR_ESTAT_ECODE]     <= wb_ecode;
-            csr_estat[`CSR_ESTAT_ESUBCODE]  <= wb_esubcode;
         end
     end
 
@@ -217,12 +214,149 @@ module csr(
                          | {32{save_rsel_i[2]}} & csr_save_i[2]
                          | {32{save_rsel_i[3]}} & csr_save_i[3];
 
+    // ECFG fields
+
+    wire       ecfg_rsel  = csr_rnum == `CSR_ECFG;
+    wire       ecfg_wsel  = csr_wnum == `CSR_ECFG;
+    wire [31:0] ecfg_wmask = ecfg_wsel ? csr_wmask : 32'b0;
+    wire [31:0] ecfg_wdata = ecfg_wmask & csr_wvalue | ~ecfg_wmask & csr_ecfg;
+
+    always @(posedge clk) begin
+        // unused fields
+        csr_ecfg[`CSR_ECFG_ZERO0] <= 3'b0;
+        csr_ecfg[`CSR_ECFG_ZERO1] <= 13'b0;
+
+        // according to loongarch docs, ECFG.LIE and ECFG.VS should be reset to 0
+        if (rst) begin
+            csr_ecfg[`CSR_ECFG_LIE] <= 13'b0;
+            csr_ecfg[`CSR_ECFG_VS] <= 3'b0;
+        end else if (csr_we && ecfg_wsel) begin
+            csr_ecfg[`CSR_ECFG_LIE] <= ecfg_wdata[`CSR_ECFG_LIE];
+            csr_ecfg[`CSR_ECFG_VS] <= ecfg_wdata[`CSR_ECFG_VS];
+        end
+    end
+
+    // BADV fields
+
+    wire       badv_rsel  = csr_rnum == `CSR_BADV;
+    wire       badv_wsel  = csr_wnum == `CSR_BADV;
+    wire [31:0] badv_wmask = badv_wsel ? csr_wmask : 32'b0;
+    wire [31:0] badv_wdata = badv_wmask & csr_wvalue | ~badv_wmask & csr_badv;
+
+    always @(posedge clk) begin
+        if (csr_we && badv_wsel)
+            csr_badv <= badv_wdata;
+    end
+
+    // TID fields
+    wire       tid_rsel  = csr_rnum == `CSR_TID;
+    wire       tid_wsel  = csr_wnum == `CSR_TID;
+    wire [31:0] tid_wmask = tid_wsel ? csr_wmask : 32'b0;
+    wire [31:0] tid_wdata = tid_wmask & csr_wvalue | ~tid_wmask & csr_tid;
+    always @(posedge clk) begin
+        if (rst)
+            csr_tid <= externel_coreid;
+        else if (csr_we && tid_wsel)
+            csr_tid <= tid_wdata;
+    end
+
+    // TCFG fields
+    wire       tcfg_rsel  = csr_rnum == `CSR_TCFG;
+    wire       tcfg_wsel  = csr_wnum == `CSR_TCFG;
+    wire [31:0] tcfg_wmask = tcfg_wsel ? csr_wmask : 32'b0;
+    wire [31:0] tcfg_wdata = tcfg_wmask & csr_wvalue | ~tcfg_wmask & csr_tcfg;
+    always @(posedge clk) begin
+        if (rst)
+            csr_tcfg[`CSR_TCFG_EN] <= 1'b0;
+        else if (csr_we && tcfg_wsel)
+            csr_tcfg[`CSR_TCFG_EN] <= tcfg_wdata[`CSR_TCFG_EN];
+
+        if (csr_we && tcfg_wsel) begin
+            csr_tcfg[`CSR_TCFG_PERIOD] <= tcfg_wdata[`CSR_TCFG_PERIOD];
+            csr_tcfg[`CSR_TCFG_INIT] <= tcfg_wdata[`CSR_TCFG_INIT];
+        end
+    end
+
+    // TVAL fields
+    wire       tval_rsel  = csr_rnum == `CSR_TVAL;
+    reg [31:0] timer_cnt;
+
+    always @(posedge clk) begin
+        if (rst)
+            timer_cnt <= 32'hffffffff;
+        else if (csr_we && tcfg_wsel && tcfg_wdata[`CSR_TCFG_EN]) // reset cnt when enabling timer
+            timer_cnt <= {tcfg_wdata[`CSR_TCFG_INIT], 2'b0};
+        else if (csr_tcfg[`CSR_TCFG_EN] && timer_cnt != 32'hffffffff) begin
+            if (timer_cnt == 32'h0 && csr_tcfg[`CSR_TCFG_PERIOD])
+                timer_cnt <= {csr_tcfg[`CSR_TCFG_INIT], 2'b0};
+            else
+                timer_cnt <= timer_cnt - 1'b1;
+        end
+        // NOTE: when not periodic, stall at 32'hffffffff, only equals to 32'h0
+        // at a specific cycle, thus producing a sparkel signal, would not interfere with ticlr inst.
+        // (check the priority of ESTAT.TI, if cnt is zero, the TI would never
+        // be cleared)
+    end
+
+    assign csr_tval = timer_cnt;
+
+    // TICLR fields
+    wire       ticlr_rsel  = csr_rnum == `CSR_TICLR;
+    wire       ticlr_wsel  = csr_wnum == `CSR_TICLR;
+    wire [31:0] ticlr_wmask = ticlr_wsel ? csr_wmask : 32'b0;
+    wire [31:0] ticlr_wdata = ticlr_wmask & csr_wvalue | ~ticlr_wmask & csr_ticlr;
+
+    assign csr_ticlr = 32'h0; // NOTE: csr.ticlr is not readable
+
+    // ESTAT fields
+    wire        estat_rsel  = csr_rnum == `CSR_ESTAT;
+    wire        estat_wsel  = csr_wnum == `CSR_ESTAT;
+    wire [31:0] estat_wmask = estat_wsel ? csr_wmask : 32'b0;
+    wire [31:0] estat_wdata = estat_wmask & csr_wvalue | ~estat_wmask & csr_estat;
+
+    always @(posedge clk) begin
+        // unused fields
+        csr_estat[`CSR_ESTAT_ZERO1] <= 3'b0;
+        csr_estat[`CSR_ESTAT_ZERO2] <= 1'b0;
+
+        // ESTAT.IS
+        if (rst)
+            csr_estat[`CSR_ESTAT_IS_SWI] <= 2'b0;
+        else if (csr_we && estat_wsel)
+            csr_estat[`CSR_ESTAT_IS_SWI] <= estat_wdata[`CSR_ESTAT_IS_SWI];
+
+        csr_estat[`CSR_ESTAT_IS_HWI] <= externel_hw_int;
+        csr_estat[`CSR_ESTAT_IS_PMI] <= 1'b0;
+
+        if (rst)
+            csr_estat[`CSR_ESTAT_IS_TI] <= 1'b0;
+        else if (csr_tcfg[`CSR_TCFG_EN] && timer_cnt == 32'h0)
+            csr_estat[`CSR_ESTAT_IS_TI] <= 1'b1;
+        else if (csr_we && ticlr_wsel && ticlr_wdata[`CSR_TICLR_CLR])
+            csr_estat[`CSR_ESTAT_IS_TI] <= 1'b0;
+
+        csr_estat[`CSR_ESTAT_IS_IPI] <= externel_ipi_int;
+
+        // ESTAT.Ecode
+        if (wb_ex) begin
+            csr_estat[`CSR_ESTAT_ECODE]     <= wb_ecode;
+            csr_estat[`CSR_ESTAT_ESUBCODE]  <= wb_esubcode;
+        end
+    end
+
     // CSR read
     assign csr_rvalue = {32{crmd_rsel}}   & csr_crmd
                       | {32{prmd_rsel}}   & csr_prmd
                       | {32{estat_rsel}}  & csr_estat
                       | {32{era_rsel}}    & csr_era
                       | {32{eentry_rsel}} & csr_eentry
-                      | {32{save_rsel}}   & csr_save;
+                      | {32{save_rsel}}   & csr_save
+                      | {32{ecfg_rsel}}   & csr_ecfg
+                      | {32{badv_rsel}}   & csr_badv
+                      | {32{tid_rsel}}    & csr_tid
+                      | {32{tcfg_rsel}}   & csr_tcfg
+                      | {32{tval_rsel}}   & csr_tval
+                      | {32{ticlr_rsel}}  & csr_ticlr
+                      ;
 
 endmodule
