@@ -58,14 +58,12 @@
 `define CSR_TICLR_ZERO 31:1
 
 `define ECODE_SYS  6'hb
+`define ECODE_BRK  6'hc
 `define ECODE_ADEF 6'h8
 `define ECODE_INE  6'hd
 `define ECODE_INTR 6'h0
 
-`define ESUBCODE_SYS  9'h0
 `define ESUBCODE_ADEF 9'h0
-`define ESUBCODE_INE  9'h0
-`define ESUBCODE_INTR 9'h0
 
 
 module csr(
