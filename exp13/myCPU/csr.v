@@ -57,6 +57,17 @@
 `define CSR_TICLR_CLR 0
 `define CSR_TICLR_ZERO 31:1
 
+`define ECODE_SYS  6'hb
+`define ECODE_ADEF 6'h8
+`define ECODE_INE  6'hd
+`define ECODE_INTR 6'h0
+
+`define ESUBCODE_SYS  9'h0
+`define ESUBCODE_ADEF 9'h0
+`define ESUBCODE_INE  9'h0
+`define ESUBCODE_INTR 9'h0
+
+
 module csr(
     input  wire clk,
     input  wire rst,
@@ -65,6 +76,7 @@ module csr(
     input  wire [13:0]  csr_rnum,
     input  wire [13:0]  csr_wnum,
     output wire [31:0]  csr_rvalue,
+
     input  wire         csr_we,
     input  wire [31:0]  csr_wmask,
     input  wire [31:0]  csr_wvalue,
@@ -75,6 +87,7 @@ module csr(
     input  wire [ 5:0]  wb_ecode,
     input  wire [ 8:0]  wb_esubcode,
     input  wire         ertn_flush,
+    output wire [12:0]  intr_stat,
     output wire [31:0]  ex_entry,
     output wire [31:0]  ex_ra
 );
@@ -358,5 +371,8 @@ module csr(
                       | {32{tval_rsel}}   & csr_tval
                       | {32{ticlr_rsel}}  & csr_ticlr
                       ;
+
+    assign intr_stat = {13{csr_crmd[`CSR_CRMD_IE]}}
+                     & csr_ecfg[`CSR_ECFG_LIE] & csr_estat[`CSR_ESTAT_IS];
 
 endmodule

@@ -29,7 +29,20 @@ module stage_id(
     output wire [ 4:0] output_rf_waddr,
     output wire        output_rf_we,
 
+    // exception info
+    input  wire        input_ex_valid, // ADEF exception from IF
+    input  wire [ 5:0] input_ecode,
+    input  wire [ 8:0] input_esubcode,
+    output wire        output_ex_valid,
+    output wire [ 5:0] output_ecode,
+    output wire [ 8:0] output_esubcode,
+
     // CSR bundle for WB
+    input  wire        input_csr_en,
+    input  wire [13:0] input_csr_num,
+    input  wire        input_csr_we,
+    input  wire [31:0] input_csr_wmask,
+    input  wire [31:0] input_csr_wvalue,
     output wire        output_csr_en,
     output wire [13:0] output_csr_num,
     output wire        output_csr_we,
@@ -38,23 +51,20 @@ module stage_id(
 
     // CSR value/flag
     input  wire [31:0] csr_rvalue,
+    input  wire [12:0] intr_stat,
     output wire        output_is_csr,
     output wire [31:0] output_csr_rvalue,
 
     // ERTN flag
     output wire        output_is_ertn,
 
-    // exception info
-    output wire        output_ex_valid,
-    output wire [ 5:0] output_ecode,
-    output wire [ 8:0] output_esubcode,
-
     // I/O
     input  wire [31:0] rf_rdata1, rf_rdata2,
     output wire [ 4:0] rf_raddr1, rf_raddr2
 );
 
-    wire valid;
+    wire valid; // pipeline status
+    wire legal; // no unexpected exception
 
     cancelable_pipeline pipe(
         .clk(clk), .rst(rst),
@@ -68,15 +78,41 @@ module stage_id(
 /**************** input ****************/
 
     reg [31:0] pc, inst;
+    reg ex_valid_r; // exception from previous pipeline stage
+    reg [ 5:0] ecode_r;
+    reg [ 8:0] esubcode_r;
+    reg        csr_en_r;
+    reg [13:0] csr_num_r;
+    reg        csr_we_r;
+    reg [31:0] csr_wmask_r;
+    reg [31:0] csr_wvalue_r;
 
     always @(posedge clk) begin
         if (rst) begin
             pc <= 32'h0;
             inst <= 32'h0;
+            ex_valid_r <= 1'b0;
+            ecode_r <= 6'h0;
+            esubcode_r <= 9'h0;
+            csr_en_r    <= 1'b0;
+            csr_num_r   <= 14'h0;
+            csr_we_r    <= 1'b0;
+            csr_wmask_r <= 32'h0;
+            csr_wvalue_r<= 32'h0;
         end
         else if (pipe.refreshing) begin
             pc <= input_pc;
             inst <= input_inst;
+
+            ex_valid_r  <= input_ex_valid;
+            ecode_r     <= input_ecode;
+            esubcode_r  <= input_esubcode;
+
+            csr_en_r    <= input_csr_en;
+            csr_num_r   <= input_csr_num;
+            csr_we_r    <= input_csr_we;
+            csr_wmask_r <= input_csr_wmask;
+            csr_wvalue_r<= input_csr_wvalue;
         end
     end
 
@@ -166,6 +202,17 @@ module stage_id(
     wire        inst_div_wu;
     wire        inst_mod_w;
     wire        inst_mod_wu;
+    wire        inst_syscall;
+    wire        inst_ertn;
+    wire        inst_csrrd;
+    wire        inst_csrwr;
+    wire        inst_csrxchg;
+    wire        inst_rdcntvl_w;
+    wire        inst_rdcntvh_w;
+    wire        inst_rdcntid;
+
+    wire        exception_ine;
+    wire        exception_intr;
 
     wire        need_ui5;
     wire        need_si12;
@@ -178,10 +225,8 @@ module stage_id(
     wire [31:0] alu_src1;
     wire [31:0] alu_src2;
     wire [18:0] alu_op;
+
     // syscall/CSR/ERTN detect
-    wire        inst_syscall;
-    wire        inst_ertn;
-    wire        inst_csrrd, inst_csrwr, inst_csrxchg;
     wire        ex_valid;
     wire [5:0]  ex_ecode;
     wire [8:0]  ex_esubcode;
@@ -208,63 +253,87 @@ module stage_id(
     decoder_2_4  u_dec2(.in(op_21_20 ), .out(op_21_20_d ));
     decoder_5_32 u_dec3(.in(op_19_15 ), .out(op_19_15_d ));
 
-    assign inst_add_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h00];
-    assign inst_sub_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h02];
-    assign inst_slt     = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h04];
-    assign inst_sltu    = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h05];
-    assign inst_nor     = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h08];
-    assign inst_and     = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h09];
-    assign inst_or      = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h0a];
-    assign inst_xor     = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h0b];
-    assign inst_slli_w  = op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h01];
-    assign inst_srli_w  = op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h09];
-    assign inst_srai_w  = op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h11];
-    assign inst_sll_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b01110];
-    assign inst_srl_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b01111];
-    assign inst_sra_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b10000];
-    assign inst_mul_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b11000];
-    assign inst_mulh_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b11001];
-    assign inst_mulh_wu = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b11010];
-    assign inst_div_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00000];
-    assign inst_mod_w   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00001];
-    assign inst_div_wu  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00010];
-    assign inst_mod_wu  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00011];
+    assign inst_add_w   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h00];
+    assign inst_sub_w   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h02];
+    assign inst_slt     = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h04];
+    assign inst_sltu    = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h05];
+    assign inst_nor     = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h08];
+    assign inst_and     = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h09];
+    assign inst_or      = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h0a];
+    assign inst_xor     = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h0b];
+    assign inst_slli_w  = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h01];
+    assign inst_srli_w  = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h09];
+    assign inst_srai_w  = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h11];
+    assign inst_sll_w   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b01110];
+    assign inst_srl_w   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b01111];
+    assign inst_sra_w   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b10000];
+    assign inst_mul_w   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b11000];
+    assign inst_mulh_w  = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b11001];
+    assign inst_mulh_wu = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'b11010];
+    assign inst_div_w   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00000];
+    assign inst_mod_w   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00001];
+    assign inst_div_wu  = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00010];
+    assign inst_mod_wu  = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'b00011];
 
-    assign inst_slti   = op_31_26_d[6'h00] & op_25_22_d[4'b1000];
-    assign inst_sltui  = op_31_26_d[6'h00] & op_25_22_d[4'b1001];
-    assign inst_addi_w = op_31_26_d[6'h00] & op_25_22_d[4'b1010];
-    assign inst_andi   = op_31_26_d[6'h00] & op_25_22_d[4'b1101];
-    assign inst_ori    = op_31_26_d[6'h00] & op_25_22_d[4'b1110];
-    assign inst_xori   = op_31_26_d[6'h00] & op_25_22_d[4'b1111];
+    assign inst_slti   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'b1000];
+    assign inst_sltui  = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'b1001];
+    assign inst_addi_w = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'b1010];
+    assign inst_andi   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'b1101];
+    assign inst_ori    = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'b1110];
+    assign inst_xori   = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'b1111];
 
-    assign inst_ld_b   = op_31_26_d[6'h0a] & op_25_22_d[4'h0];
-    assign inst_ld_h   = op_31_26_d[6'h0a] & op_25_22_d[4'h1];
-    assign inst_ld_bu  = op_31_26_d[6'h0a] & op_25_22_d[4'h8];
-    assign inst_ld_hu  = op_31_26_d[6'h0a] & op_25_22_d[4'h9];
-    assign inst_ld_w   = op_31_26_d[6'h0a] & op_25_22_d[4'h2];
-    assign inst_st_b   = op_31_26_d[6'h0a] & op_25_22_d[4'h4];
-    assign inst_st_h   = op_31_26_d[6'h0a] & op_25_22_d[4'h5];
-    assign inst_st_w   = op_31_26_d[6'h0a] & op_25_22_d[4'h6];
-    assign inst_jirl   = op_31_26_d[6'h13];
-    assign inst_b      = op_31_26_d[6'h14];
-    assign inst_bl     = op_31_26_d[6'h15];
-    assign inst_beq    = op_31_26_d[6'h16];
-    assign inst_bne    = op_31_26_d[6'h17];
-    assign inst_blt    = op_31_26_d[6'h18];
-    assign inst_bge    = op_31_26_d[6'h19];
-    assign inst_bltu   = op_31_26_d[6'h1a];
-    assign inst_bgeu   = op_31_26_d[6'h1b];
+    assign inst_ld_b   = ~ex_valid_r & op_31_26_d[6'h0a] & op_25_22_d[4'h0];
+    assign inst_ld_h   = ~ex_valid_r & op_31_26_d[6'h0a] & op_25_22_d[4'h1];
+    assign inst_ld_bu  = ~ex_valid_r & op_31_26_d[6'h0a] & op_25_22_d[4'h8];
+    assign inst_ld_hu  = ~ex_valid_r & op_31_26_d[6'h0a] & op_25_22_d[4'h9];
+    assign inst_ld_w   = ~ex_valid_r & op_31_26_d[6'h0a] & op_25_22_d[4'h2];
+    assign inst_st_b   = ~ex_valid_r & op_31_26_d[6'h0a] & op_25_22_d[4'h4];
+    assign inst_st_h   = ~ex_valid_r & op_31_26_d[6'h0a] & op_25_22_d[4'h5];
+    assign inst_st_w   = ~ex_valid_r & op_31_26_d[6'h0a] & op_25_22_d[4'h6];
+    assign inst_jirl   = ~ex_valid_r & op_31_26_d[6'h13];
+    assign inst_b      = ~ex_valid_r & op_31_26_d[6'h14];
+    assign inst_bl     = ~ex_valid_r & op_31_26_d[6'h15];
+    assign inst_beq    = ~ex_valid_r & op_31_26_d[6'h16];
+    assign inst_bne    = ~ex_valid_r & op_31_26_d[6'h17];
+    assign inst_blt    = ~ex_valid_r & op_31_26_d[6'h18];
+    assign inst_bge    = ~ex_valid_r & op_31_26_d[6'h19];
+    assign inst_bltu   = ~ex_valid_r & op_31_26_d[6'h1a];
+    assign inst_bgeu   = ~ex_valid_r & op_31_26_d[6'h1b];
 
-    assign inst_lu12i_w   = op_31_26_d[6'b000101] & ~inst[25];
-    assign inst_pcaddu12i = op_31_26_d[6'b000111] & ~inst[25];
+    assign inst_lu12i_w   = ~ex_valid_r & op_31_26_d[6'b000101] & ~inst[25];
+    assign inst_pcaddu12i = ~ex_valid_r & op_31_26_d[6'b000111] & ~inst[25];
 
-    assign inst_syscall = (inst[31:15] == 17'b00000000001010110);
-    assign inst_ertn = (inst == 32'h06483800);
+    assign inst_syscall = ~ex_valid_r & (inst[31:15] == 17'b00000000001010110);
+    assign inst_ertn    = ~ex_valid_r & (inst == 32'h06483800);
+
+    assign inst_csrrd   = ~ex_valid_r & is_csr_op & (inst[9:5]  == 5'b00000);
+    assign inst_csrwr   = ~ex_valid_r & is_csr_op & (inst[9:5]  == 5'b00001);
+    assign inst_csrxchg = ~ex_valid_r & is_csr_op & (inst[9:5]  != 5'b00000) & (inst[9:5] != 5'b00001);
+
+    assign inst_rdcntvl_w = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & inst[14:10] == 5'b11000;
+    assign inst_rdcntvh_w = ~ex_valid_r & op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & inst[14:10] == 5'b11001;
+
+    assign exception_ine = ~ex_valid_r      &
+                           ~inst_add_w      & ~inst_sub_w       & ~inst_slt     & ~inst_sltu &
+                           ~inst_nor        & ~inst_and         & ~inst_or      & ~inst_xor &
+                           ~inst_sll_w      & ~inst_srl_w       & ~inst_sra_w   & ~inst_slli_w &
+                           ~inst_srli_w     & ~inst_srai_w      & ~inst_addi_w  & ~inst_slti &
+                           ~inst_sltui      & ~inst_andi        & ~inst_ori     & ~inst_xori &
+                           ~inst_ld_w       & ~inst_ld_b        & ~inst_ld_h    & ~inst_ld_bu &
+                           ~inst_ld_hu      & ~inst_st_b        & ~inst_st_h    & ~inst_st_w &
+                           ~inst_jirl       & ~inst_b           & ~inst_bl      & ~inst_beq &
+                           ~inst_bne        & ~inst_blt         & ~inst_bge     & ~inst_bltu &
+                           ~inst_bgeu       & ~inst_lu12i_w     & ~inst_mul_w   & ~inst_mulh_w &
+                           ~inst_mulh_wu    & ~inst_pcaddu12i   & ~inst_div_w   & ~inst_div_wu &
+                           ~inst_mod_w      & ~inst_mod_wu      & ~inst_syscall & ~inst_ertn &
+                           ~inst_csrrd      & ~inst_csrwr       & ~inst_csrxchg & ~inst_rdcntvl_w &
+                           ~inst_rdcntvh_w  & ~inst_rdcntid;
+
+    assign exception_intr = valid & (intr_stat != 13'h0);
+
+    assign legal = ~ex_valid_r & ~exception_ine;
 
     wire is_csr_op = (inst[31:24] == 8'h04);
-    assign inst_csrrd   = is_csr_op & (inst[9:5]  == 5'b00000);
-    assign inst_csrwr   = is_csr_op & (inst[9:5]  == 5'b00001);
-    assign inst_csrxchg = is_csr_op & (inst[9:5]  != 5'b00000) & (inst[9:5] != 5'b00001);
     assign is_csr       = (inst_csrrd | inst_csrwr | inst_csrxchg) & valid;
 
     assign alu_op[ 0] = inst_add_w | inst_addi_w| inst_ld_b | inst_ld_h
@@ -340,9 +409,11 @@ module stage_id(
     assign res_from_mem  = inst_ld_b | inst_ld_h | inst_ld_bu | inst_ld_hu | inst_ld_w;
     assign dst_is_r1     = inst_bl;
 
-    assign gr_we         = (~inst_st_b & ~inst_st_h & ~inst_st_w & ~inst_beq & ~inst_bne & ~inst_b & ~inst_blt
-                           & ~inst_bge & ~inst_bltu & ~inst_bgeu & ~inst_syscall & ~inst_ertn)
-                           | (inst_csrrd | inst_csrwr | inst_csrxchg);
+    assign gr_we         = legal &
+                           ~inst_st_b & ~inst_st_h & ~inst_st_w & ~inst_beq & ~inst_bne &
+                           ~inst_b & ~inst_blt & ~inst_bge & ~inst_bltu & ~inst_bgeu & 
+                           ~inst_syscall & ~inst_ertn;
+
     assign mem_we        = inst_st_b | inst_st_h | inst_st_w;
     assign dest          = dst_is_r1 ? 5'd1 : rd;
 
@@ -379,10 +450,20 @@ module stage_id(
     assign alu_src2 = src2_is_imm ? imm : rkd_value;
 
 /**************** exception detect & output ****************/
-    // Only syscall in exp12
-    assign ex_valid    = inst_syscall & valid;
-    assign ex_ecode    = 6'h0b; // SYS
-    assign ex_esubcode = 9'h0;
+
+    // TODO: remove redunctant valid
+    assign ex_valid = inst_syscall & valid
+                    | exception_ine & valid
+                    | exception_intr & valid
+                    ;
+    assign ex_ecode = {6{inst_syscall & valid}} & `ECODE_SYS
+                    | {6{exception_ine & valid}} & `ECODE_INE
+                    | {6{exception_intr & valid}} & `ECODE_INTR // WARN: assert ECFG.VS = 0
+                    ;
+    assign ex_esubcode = {9{inst_syscall & valid}} & `ESUBCODE_SYS
+                       | {9{exception_ine & valid}} & `ESUBCODE_INE
+                       | {9{exception_intr & valid}} & `ESUBCODE_INTR
+                       ;
 
 /**************** CSR/ERTN outputs ****************/
     wire [13:0] csr_num_imm = inst[23:10];
@@ -407,11 +488,19 @@ module stage_id(
     assign output_ex_valid  = ex_valid;
     assign output_ecode     = ex_ecode;
     assign output_esubcode  = ex_esubcode;
-    assign output_csr_en    = csr_en;
-    assign output_csr_num   = csr_num_imm;
-    assign output_csr_we    = csr_do_write;
-    assign output_csr_wmask = csr_wmask;
-    assign output_csr_wvalue= csr_wvalue;
+    assign output_csr_en    = csr_en | csr_en_r;
+    assign output_csr_num   = {14{csr_en}} & csr_num_imm
+                            | {14{csr_en_r}} & csr_num_r
+                            ;
+    assign output_csr_we    = csr_en & csr_do_write
+                            | csr_en_r & csr_we_r
+                            ;
+    assign output_csr_wmask = {32{csr_en}} & csr_wmask
+                            | {32{csr_en_r}} & csr_wmask_r
+                            ;
+    assign output_csr_wvalue= {32{csr_en}} & csr_wvalue
+                            | {32{csr_en_r}} & csr_wvalue_r
+                            ;
     assign output_is_csr    = is_csr;
     assign output_csr_rvalue= csr_rvalue;
     assign output_is_ertn   = inst_ertn & valid;

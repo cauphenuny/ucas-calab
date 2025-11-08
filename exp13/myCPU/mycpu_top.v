@@ -117,6 +117,7 @@ module mycpu_top(
     wire         ertn_flush;
     wire [31:0]  ex_entry;
     wire [31:0]  ex_ra;
+    wire [12:0]  intr_stat;
 
     csr u_csr(
         .clk        (clk),
@@ -134,6 +135,7 @@ module mycpu_top(
         .wb_ecode   (wb_ecode),
         .wb_esubcode(wb_esubcode),
         .ertn_flush (ertn_flush),
+        .intr_stat  (intr_stat),
         .ex_entry   (ex_entry),
         .ex_ra      (ex_ra)
     );
@@ -285,6 +287,7 @@ module mycpu_top(
         .output_csr_wvalue(id_csr_wvalue),
 
         .csr_rvalue(csr_rvalue),
+        .intr_stat(intr_stat),
         .output_is_csr(id_is_csr),
         .output_csr_rvalue(id_csr_rvalue),
 
