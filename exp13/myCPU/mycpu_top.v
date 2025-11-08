@@ -360,6 +360,7 @@ module mycpu_top(
         .older_ex(mem_ex_valid | wb_ex),
 
         .data_sram_we(data_sram_we),
+        .data_sram_en(data_sram_en),
         .data_sram_addr(data_sram_addr),
         .data_sram_wdata(data_sram_wdata)
     );
@@ -475,7 +476,6 @@ module mycpu_top(
     /* verilator lint_on PINCONNECTEMPTY */
     /* verilator lint_on ASSIGNIN */
 
-    assign data_sram_en = 1'h1;
     assign inst_sram_we = 4'h0;
     assign inst_sram_wdata = 32'h0;
 

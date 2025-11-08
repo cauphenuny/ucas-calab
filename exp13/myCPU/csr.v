@@ -60,6 +60,7 @@
 `define ECODE_SYS  6'hb
 `define ECODE_BRK  6'hc
 `define ECODE_ADEF 6'h8
+`define ECODE_ALE  6'h9
 `define ECODE_INE  6'hd
 `define ECODE_INTR 6'h0
 

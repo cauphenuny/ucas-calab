@@ -73,11 +73,16 @@ module stage_ex(
 
     // I/O
     output wire [ 3:0] data_sram_we,
+    output wire        data_sram_en,
     output wire [31:0] data_sram_addr,
     output wire [31:0] data_sram_wdata
 );
 
     wire valid, readygo;
+
+    wire       ex_valid;
+    wire [5:0] ecode;
+    wire [8:0] esubcode;
 
     cancelable_pipeline pipe(
         .clk(clk), .rst(rst),
@@ -213,6 +218,9 @@ module stage_ex(
     reg         op_st_b, op_st_h, op_st_w;
     reg [4:0]   mem_op_ld;
     reg [31:0]  mem_data;
+    wire        op_ld_b, op_ld_h, op_ld_bu, op_ld_hu, op_ld_w;
+
+    assign {op_ld_b, op_ld_h, op_ld_bu, op_ld_hu, op_ld_w} = mem_op_ld;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -231,7 +239,7 @@ module stage_ex(
         end
     end
 
-    assign data_sram_we   = (validout && ~older_ex) ? (
+    assign data_sram_we   = (validout && ~older_ex && ~ex_valid) ? (
                                 op_st_w ? 4'b1111
                                 : op_st_h ? (alu_result[1] ? 4'b1100 : 4'b0011)
                                 : op_st_b ? (alu_result[1:0] == 2'b00 ? 4'b0001
@@ -241,6 +249,7 @@ module stage_ex(
                                             : 4'b0000)
                                 : 4'b0000)
                              : 4'b0000;
+    assign data_sram_en = ~ex_valid;
     assign data_sram_addr  = alu_result;
     assign data_sram_wdata = op_st_b ? {4{mem_data[7:0]}}
                              : op_st_h ? {2{mem_data[15:0]}}
@@ -267,9 +276,16 @@ module stage_ex(
         end
     end
 
-    assign output_ex_valid  = ex_valid_r;
-    assign output_ecode     = ecode_r;
-    assign output_esubcode  = esubcode_r;
+    assign ex_valid = (op_st_w | op_ld_w) & (data_sram_addr[1:0] != 2'b0)
+                    | (op_st_h | op_ld_h | op_ld_hu) & (data_sram_addr[0] != 1'b0);
+    assign ecode = `ECODE_ALE;
+    assign esubcode = 9'h0;
+
+    assign output_ex_valid  = ex_valid_r | ex_valid;
+    assign output_ecode     = {6{ex_valid_r}} & ecode_r
+                            | {6{ex_valid}} & ecode;
+    assign output_esubcode  = {9{ex_valid_r}} & esubcode_r
+                            | {9{ex_valid}} & esubcode;
 
 /**************** CSR bundle & ERTN ****************/
     reg        csr_en_r;
