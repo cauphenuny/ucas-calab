@@ -132,7 +132,7 @@ module stage_mem(
         end
     end
 
-    assign output_ex_valid  = ex_valid_r;
+    assign output_ex_valid  = ex_valid_r && valid;
     assign output_ecode     = ecode_r;
     assign output_esubcode  = esubcode_r;
 

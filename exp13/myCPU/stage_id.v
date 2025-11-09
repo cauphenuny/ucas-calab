@@ -466,7 +466,6 @@ module stage_id(
 
 /**************** exception detect & output ****************/
 
-    // TODO: remove redunctant valid
     assign ex_valid = inst_break & valid
                     | inst_syscall & valid
                     | exception_ine & valid

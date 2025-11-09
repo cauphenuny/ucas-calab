@@ -281,7 +281,7 @@ module stage_ex(
     assign ecode = `ECODE_ALE;
     assign esubcode = 9'h0;
 
-    assign output_ex_valid  = ex_valid_r | ex_valid;
+    assign output_ex_valid  = (ex_valid_r | ex_valid) & valid;
     assign output_ecode     = {6{ex_valid_r}} & ecode_r
                             | {6{ex_valid}} & ecode;
     assign output_esubcode  = {9{ex_valid_r}} & esubcode_r
