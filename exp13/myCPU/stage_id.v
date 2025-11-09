@@ -471,8 +471,8 @@ module stage_id(
                     | exception_ine & valid
                     | exception_intr & valid
                     ;
-    assign ex_ecode = {6{inst_break & valid}} & `ECODE_SYS
-                    | {6{inst_syscall & valid}} & `ECODE_BRK
+    assign ex_ecode = {6{inst_break & valid}} & `ECODE_BRK
+                    | {6{inst_syscall & valid}} & `ECODE_SYS
                     | {6{exception_ine & valid}} & `ECODE_INE
                     | {6{exception_intr & valid}} & `ECODE_INTR // WARN: assert ECFG.VS = 0
                     ;

@@ -154,7 +154,7 @@ module stage_ex(
                    | (current_state == STATE_DONE)
                    ;
 
-    wire alu_req_valid = valid && (current_state == STATE_REQ) && ~(older_ex & long_op) && ~flush;
+    wire alu_req_valid = valid && (current_state == STATE_REQ) && ~(older_ex & long_op) && ~cancel;
 
 /**************** execute unit ****************/
 
