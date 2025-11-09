@@ -52,6 +52,7 @@ module stage_id(
     // CSR value/flag
     input  wire [31:0] csr_rvalue,
     input  wire [12:0] intr_stat,
+    input  wire        input_is_csr,
     output wire        output_is_csr,
     output wire [31:0] output_csr_rvalue,
 
@@ -78,6 +79,7 @@ module stage_id(
 /**************** input ****************/
 
     reg [31:0] pc, inst;
+    reg is_csr_r;
     reg ex_valid_r; // exception from previous pipeline stage
     reg [ 5:0] ecode_r;
     reg [ 8:0] esubcode_r;
@@ -91,6 +93,7 @@ module stage_id(
         if (rst) begin
             pc <= 32'h0;
             inst <= 32'h0;
+            is_csr_r <= 1'h0;
             ex_valid_r <= 1'b0;
             ecode_r <= 6'h0;
             esubcode_r <= 9'h0;
@@ -108,6 +111,7 @@ module stage_id(
             ecode_r     <= input_ecode;
             esubcode_r  <= input_esubcode;
 
+            is_csr_r    <= input_is_csr;
             csr_en_r    <= input_csr_en;
             csr_num_r   <= input_csr_num;
             csr_we_r    <= input_csr_we;
@@ -519,7 +523,7 @@ module stage_id(
     assign output_csr_wvalue= {32{csr_en}} & csr_wvalue
                             | {32{csr_en_r}} & csr_wvalue_r
                             ;
-    assign output_is_csr    = is_csr;
+    assign output_is_csr    = is_csr | is_csr_r;
     assign output_csr_rvalue= csr_rvalue;
     assign output_is_ertn   = inst_ertn & valid;
     assign output_br_taken  = br_taken & ~stall; // when stall, can not take br_taken

@@ -45,6 +45,7 @@ module mycpu_top(
     wire        if_ex_valid;
     wire [ 5:0] if_ecode;
     wire [ 8:0] if_esubcode;
+    wire        if_is_csr;
     wire        if_csr_en;
     wire        if_csr_we;
     wire [13:0] if_csr_num;
@@ -82,6 +83,7 @@ module mycpu_top(
     assign if_ecode = `ECODE_ADEF;
     assign if_esubcode = `ESUBCODE_ADEF;
 
+    assign if_is_csr = if_ex_adef;
     assign if_csr_en = 1'b0;
     assign if_csr_num = `CSR_BADV;
     assign if_csr_we = if_ex_adef;
@@ -274,6 +276,7 @@ module mycpu_top(
         .input_ecode(if_ecode),
         .input_esubcode(if_esubcode),
 
+        .input_is_csr(if_is_csr),
         .input_csr_en(if_csr_en),
         .input_csr_num(if_csr_num),
         .input_csr_we(if_csr_we),

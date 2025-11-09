@@ -317,14 +317,32 @@ module stage_ex(
         end
     end
 
-    assign output_csr_en    = csr_en_r;
-    assign output_csr_num   = csr_num_r;
-    assign output_csr_we    = csr_we_r;
-    assign output_csr_wmask = csr_wmask_r;
-    assign output_csr_wvalue= csr_wvalue_r;
-    assign output_is_ertn   = is_ertn_r;
-    assign output_is_csr    = is_csr_r;
-    assign output_csr_rvalue= csr_rvalue_r;
+    wire        csr_en;
+    wire [13:0] csr_num;
+    wire        csr_we;
+    wire [31:0] csr_wmask;
+    wire [31:0] csr_wvalue;
+    wire        is_ertn;
+    wire        is_csr;
+    wire [31:0] csr_rvalue;
+
+    assign csr_en = 1'b0;
+    assign csr_num = `CSR_BADV;
+    assign csr_we = 1'b1;
+    assign csr_wmask = 32'hffff_ffff;
+    assign csr_wvalue = data_sram_addr;
+    assign is_ertn = 1'b0;
+    assign is_csr = 1'b1;
+    assign csr_rvalue = csr_rvalue_r;
+
+    assign output_csr_en    = ex_valid ? csr_en      : csr_en_r     ;
+    assign output_csr_num   = ex_valid ? csr_num     : csr_num_r    ;
+    assign output_csr_we    = ex_valid ? csr_we      : csr_we_r     ;
+    assign output_csr_wmask = ex_valid ? csr_wmask   : csr_wmask_r  ;
+    assign output_csr_wvalue= ex_valid ? csr_wvalue  : csr_wvalue_r ;
+    assign output_is_ertn   = ex_valid ? is_ertn     : is_ertn_r    ;
+    assign output_is_csr    = ex_valid ? is_csr      : is_csr_r     ;
+    assign output_csr_rvalue= ex_valid ? csr_rvalue  : csr_rvalue_r ;
 
 /**************** hold write-back stage data ****************/
 
