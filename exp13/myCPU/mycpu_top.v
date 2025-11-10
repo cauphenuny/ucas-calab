@@ -361,6 +361,7 @@ module mycpu_top(
         .forward_ready(ex_forward_ready),
 
         .older_ex(mem_ex_valid | wb_ex),
+        .older_ertn(mem_is_ertn | ertn_flush),
 
         .data_sram_we(data_sram_we),
         .data_sram_en(data_sram_en),

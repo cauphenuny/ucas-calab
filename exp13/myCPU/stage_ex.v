@@ -70,6 +70,7 @@ module stage_ex(
 
     // older exceptions exist in MEM/WB?
     input  wire        older_ex,
+    input  wire        older_ertn,
 
     // I/O
     output wire [ 3:0] data_sram_we,
@@ -239,7 +240,7 @@ module stage_ex(
         end
     end
 
-    assign data_sram_we   = (validout && ~older_ex && ~ex_valid) ? (
+    assign data_sram_we   = (validout && ~older_ex && ~ex_valid && ~older_ertn) ? (
                                 op_st_w ? 4'b1111
                                 : op_st_h ? (alu_result[1] ? 4'b1100 : 4'b0011)
                                 : op_st_b ? (alu_result[1:0] == 2'b00 ? 4'b0001
