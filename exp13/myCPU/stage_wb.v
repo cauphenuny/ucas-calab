@@ -18,6 +18,7 @@ module stage_wb(
     input  wire        input_rf_we,
     input  wire [31:0] input_rf_wdata,
 
+    // (for trace/debug)
     output wire [ 4:0] output_rf_waddr,
     output wire        output_rf_we,
     output wire [31:0] output_rf_wdata,
@@ -46,6 +47,7 @@ module stage_wb(
     input  wire [ 8:0] input_esubcode,
 
     // I/O
+    // (interact with RF module)
     output reg        rf_we,
     output reg [ 4:0] rf_waddr,
     output reg [31:0] rf_wdata,
@@ -98,7 +100,7 @@ module stage_wb(
             pc <= input_pc;
             rf_waddr <= input_rf_waddr;
             rf_we <= input_rf_we & ~input_ex_valid;
-            rf_wdata <= input_rf_wdata;
+            rf_wdata <= input_is_csr ? input_csr_rvalue : input_rf_wdata;
             ex_valid_r <= input_ex_valid;
             ecode_r    <= input_ecode;
             esubcode_r <= input_esubcode;
@@ -116,11 +118,10 @@ module stage_wb(
     assign output_pc = pc;
     assign output_rf_waddr = rf_waddr;
 
-    wire [31:0] wb_data = is_csr_r ? csr_rvalue_r : rf_wdata;
-    assign output_rf_wdata = wb_data;
+    assign output_rf_wdata = rf_wdata;
     assign output_rf_we = rf_we;
 
-    assign forward_data = wb_data;
+    assign forward_data = rf_wdata;
     assign forward_ready = readygo;
 
     assign csr_wnum   = csr_num_r;
