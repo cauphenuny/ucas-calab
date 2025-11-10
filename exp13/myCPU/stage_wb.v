@@ -97,7 +97,7 @@ module stage_wb(
         end else if (pipe.refreshing) begin
             pc <= input_pc;
             rf_waddr <= input_rf_waddr;
-            rf_we <= input_rf_we;
+            rf_we <= input_rf_we & ~input_ex_valid;
             rf_wdata <= input_rf_wdata;
             ex_valid_r <= input_ex_valid;
             ecode_r    <= input_ecode;
