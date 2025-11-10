@@ -84,7 +84,7 @@ module mycpu_top(
     assign if_esubcode = `ESUBCODE_ADEF;
 
     assign if_is_csr = if_ex_adef;
-    assign if_csr_en = 1'b0;
+    assign if_csr_en = if_ex_adef;
     assign if_csr_num = `CSR_BADV;
     assign if_csr_we = if_ex_adef;
     assign if_csr_wmask = 32'hffff_ffff;

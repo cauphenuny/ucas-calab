@@ -344,7 +344,7 @@ module stage_id(
 
     assign exception_intr = valid & (intr_stat != 13'h0);
 
-    assign legal = ~ex_valid_r & ~exception_ine;
+    assign legal = ~ex_valid_r & ~exception_ine & ~exception_intr;
 
     wire is_csr_op = (inst[31:24] == 8'h04);
     assign is_csr       = valid & (
@@ -490,7 +490,7 @@ module stage_id(
                             | {14{inst_rdcntid}} & `CSR_TID
                             ;
     wire        csr_en = is_csr;
-    wire        csr_do_write = (inst_csrwr | inst_csrxchg) & valid;
+    wire        csr_we = (inst_csrwr | inst_csrxchg) & valid;
     // csrxchg: wmask = rj_value, wvalue = rd_value(rkd_value)
     // csrwr  : wmask = all-1,  wvalue = rd_value(rkd_value)
     // csrrd  : no write
@@ -507,14 +507,16 @@ module stage_id(
     assign output_alu_op    = alu_op;
     assign output_rf_waddr  = dest;
     assign output_rf_we     = gr_we;
-    assign output_ex_valid  = ex_valid;
-    assign output_ecode     = ex_ecode;
-    assign output_esubcode  = ex_esubcode;
+    assign output_ex_valid  = valid & (ex_valid | ex_valid_r);
+    assign output_ecode     = {6{ex_valid}} & ex_ecode
+                            | {6{ex_valid_r}} & ecode_r;
+    assign output_esubcode  = {9{ex_valid}} & ex_esubcode
+                            | {9{ex_valid_r}} & esubcode_r;
     assign output_csr_en    = csr_en | csr_en_r;
     assign output_csr_num   = {14{csr_en}} & csr_num_imm
                             | {14{csr_en_r}} & csr_num_r
                             ;
-    assign output_csr_we    = csr_en & csr_do_write
+    assign output_csr_we    = csr_en & csr_we
                             | csr_en_r & csr_we_r
                             ;
     assign output_csr_wmask = {32{csr_en}} & csr_wmask
@@ -523,8 +525,8 @@ module stage_id(
     assign output_csr_wvalue= {32{csr_en}} & csr_wvalue
                             | {32{csr_en_r}} & csr_wvalue_r
                             ;
-    assign output_is_csr    = is_csr | is_csr_r;
     assign output_csr_rvalue= csr_rvalue;
+    assign output_is_csr    = is_csr | is_csr_r;
     assign output_is_ertn   = inst_ertn & valid;
     assign output_br_taken  = br_taken & ~stall; // when stall, can not take br_taken
     assign output_br_target = br_target;

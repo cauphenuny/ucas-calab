@@ -326,7 +326,7 @@ module stage_ex(
     wire        is_csr;
     wire [31:0] csr_rvalue;
 
-    assign csr_en = 1'b0;
+    assign csr_en = 1'b1;
     assign csr_num = `CSR_BADV;
     assign csr_we = 1'b1;
     assign csr_wmask = 32'hffff_ffff;
