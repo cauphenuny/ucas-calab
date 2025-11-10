@@ -46,6 +46,11 @@
 `define CSR_SAVE_DATA   31:0
 
 `define CSR_ECFG_LIE 12:0
+`define CSR_ECFG_LIE_SWI 1:0
+`define CSR_ECFG_LIE_HWI 9:2
+`define CSR_ECFG_LIE_PMI 10
+`define CSR_ECFG_LIE_TI 11
+`define CSR_ECFG_LIE_IPI 12
 `define CSR_ECFG_ZERO0 15:13
 `define CSR_ECFG_VS 18:16
 `define CSR_ECFG_ZERO1 31:19
@@ -243,7 +248,12 @@ module csr(
             csr_ecfg[`CSR_ECFG_LIE] <= 13'b0;
             csr_ecfg[`CSR_ECFG_VS] <= 3'b0;
         end else if (csr_we && ecfg_wsel) begin
-            csr_ecfg[`CSR_ECFG_LIE] <= ecfg_wdata[`CSR_ECFG_LIE];
+            csr_ecfg[`CSR_ECFG_LIE_SWI] <= ecfg_wdata[`CSR_ECFG_LIE_SWI];
+            csr_ecfg[`CSR_ECFG_LIE_HWI] <= ecfg_wdata[`CSR_ECFG_LIE_HWI];
+            // NOTE: PMI disabled
+            // csr_ecfg[`CSR_ECFG_LIE_PMI] <= ecfg_wdata[`CSR_ECFG_LIE_PMI];
+            csr_ecfg[`CSR_ECFG_LIE_TI] <= ecfg_wdata[`CSR_ECFG_LIE_TI];
+            csr_ecfg[`CSR_ECFG_LIE_IPI] <= ecfg_wdata[`CSR_ECFG_LIE_IPI];
             csr_ecfg[`CSR_ECFG_VS] <= ecfg_wdata[`CSR_ECFG_VS];
         end
     end
