@@ -4,16 +4,24 @@ module mycpu_top(
     input  wire        clk,
     input  wire        resetn,
     // inst sram interface
-    output wire        inst_sram_en,
-    output wire [ 3:0] inst_sram_we,
+    output wire        inst_sram_req,
+    output wire        inst_sram_wr,
+    output wire [1:0]  inst_sram_size,
     output wire [31:0] inst_sram_addr,
+    output wire [ 3:0] inst_sram_wstrb,
     output wire [31:0] inst_sram_wdata,
+    input  wire        inst_sram_addr_ok,
+    input  wire        inst_sram_data_ok,
     input  wire [31:0] inst_sram_rdata,
     // data sram interface
-    output wire        data_sram_en,
-    output wire [ 3:0] data_sram_we,
+    output wire        data_sram_req,
+    output wire        data_sram_wr,
+    output wire [1:0]  data_sram_size,
     output wire [31:0] data_sram_addr,
+    output wire [ 3:0] data_sram_wstrb,
     output wire [31:0] data_sram_wdata,
+    input  wire        data_sram_addr_ok,
+    input  wire        data_sram_data_ok,
     input  wire [31:0] data_sram_rdata,
     // trace debug interface
     output wire [31:0] debug_wb_pc,
@@ -62,7 +70,8 @@ module mycpu_top(
 
     localparam ENTRYPOINT = 32'h1c000000;
 
-    assign inst_sram_en = rst | ((id_refreshing | flush) & ~if_next_ex_adef);
+    assign inst_sram_req = rst | ((id_refreshing | flush) & ~if_next_ex_adef);
+    assign inst_sram_size  = 2'b10;   // inst固定4字节
     assign inst_sram_addr = rst ? ENTRYPOINT : nextpc;
 
     always @(posedge clk) begin
@@ -363,9 +372,11 @@ module mycpu_top(
         .older_ex(mem_ex_valid | wb_ex),
         .older_ertn(mem_is_ertn | ertn_flush),
 
-        .data_sram_we(data_sram_we),
-        .data_sram_en(data_sram_en),
+        .data_sram_req(data_sram_req),
+        .data_sram_wr(data_sram_wr),
+        .data_sram_size(data_sram_size),
         .data_sram_addr(data_sram_addr),
+        .data_sram_wstrb(data_sram_wstrb),
         .data_sram_wdata(data_sram_wdata)
     );
 
@@ -480,7 +491,8 @@ module mycpu_top(
     /* verilator lint_on PINCONNECTEMPTY */
     /* verilator lint_on ASSIGNIN */
 
-    assign inst_sram_we = 4'h0;
+    assign inst_sram_wstrb = 4'h0;
+    assign inst_sram_wr = (|inst_sram_wstrb);
     assign inst_sram_wdata = 32'h0;
 
     assign debug_wb_pc       = wb_pc;

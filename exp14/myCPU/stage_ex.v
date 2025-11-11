@@ -73,9 +73,11 @@ module stage_ex(
     input  wire        older_ertn,
 
     // I/O
-    output wire [ 3:0] data_sram_we,
-    output wire        data_sram_en,
+    output wire        data_sram_req,
+    output wire        data_sram_wr,
+    output wire [ 1:0] data_sram_size,
     output wire [31:0] data_sram_addr,
+    output wire [ 3:0] data_sram_wstrb,
     output wire [31:0] data_sram_wdata
 );
 
@@ -240,7 +242,21 @@ module stage_ex(
         end
     end
 
-    assign data_sram_we   = (validout && ~older_ex && ~ex_valid && ~older_ertn) ? (
+    wire is_store = op_st_w | op_st_h | op_st_b;
+    wire is_load  = op_ld_w | op_ld_h | op_ld_hu | op_ld_b | op_ld_bu;
+
+    assign data_sram_req = (validout && ~older_ex && ~ex_valid && ~older_ertn) 
+                            && (is_store | is_load);
+
+    assign data_sram_wr  = (validout && ~older_ex && ~ex_valid && ~older_ertn) 
+                            && is_store;
+
+    assign data_sram_size = op_st_w | op_ld_w ? 2'b10
+                            : op_st_h | op_ld_h | op_ld_hu ? 2'b01
+                            : op_st_b | op_ld_b | op_ld_bu ? 2'b00
+                            : 2'b00;
+                            
+    assign data_sram_wstrb   = (validout && ~older_ex && ~ex_valid && ~older_ertn) ? (
                                 op_st_w ? 4'b1111
                                 : op_st_h ? (alu_result[1] ? 4'b1100 : 4'b0011)
                                 : op_st_b ? (alu_result[1:0] == 2'b00 ? 4'b0001
