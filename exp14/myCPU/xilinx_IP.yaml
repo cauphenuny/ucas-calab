@@ -1,0 +1,30 @@
+udiv:
+  Channel Settings:
+    Common Options:
+      Algorithm Type: Radix2
+      Operand Sign: Unsigned
+    Dividend Channel:
+      Dividend Width: 32
+    Divisor Channel:
+      Divisor Width: 32
+    Output Channel:
+      Remainder Type: Remainder
+  Options:
+    Clocks per Division: 8
+    AXI4-Stream Options:
+      Flow Control: Non Blocking
+sdiv:
+  Channel Settings:
+    Common Options:
+      Algorithm Type: Radix2
+      Operand Sign: Signed
+    Dividend Channel:
+      Dividend Width: 32
+    Divisor Channel:
+      Divisor Width: 32
+    Output Channel:
+      Remainder Type: Remainder
+  Options:
+    Clocks per Division: 8
+    AXI4-Stream Options:
+      Flow Control: Non Blocking
