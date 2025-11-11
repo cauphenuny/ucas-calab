@@ -98,7 +98,7 @@ module cancelable_pipeline (
     end
   end
 
-  wire refreshing = validin & allowin & ~cancel;
+  wire refreshing = validin & allowin;
 endmodule
 
 // An optimized comparator module
