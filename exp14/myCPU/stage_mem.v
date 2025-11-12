@@ -61,11 +61,12 @@ module stage_mem(
     output wire [31:0] output_csr_rvalue,
 
     // I/O
-    input  wire [31:0] data_sram_rdata
+    input  wire [31:0] data_sram_rdata,
+    input  wire        data_sram_data_ok
 );
 
     wire valid;
-    wire readygo = 1'b1;
+    wire readygo = ~mem_read & ~mem_write | data_sram_data_ok;
 
     cancelable_pipeline pipe(
         .clk(clk), .rst(rst),
@@ -79,17 +80,20 @@ module stage_mem(
 /**************** memory access unit ****************/
 
     reg         mem_read;
+    reg         mem_write;
     reg         op_ld_b, op_ld_h, op_ld_bu, op_ld_hu, op_ld_w;
     reg [31:0]  alu_result;
 
     always @(posedge clk) begin
         if (rst) begin
             mem_read   <= 1'b0;
+            mem_write  <= 1'b0;
             {op_ld_b, op_ld_h, op_ld_bu, op_ld_hu, op_ld_w} <= 5'b0;
             alu_result <= 32'h0;
         end
         else if (pipe.refreshing) begin
             mem_read   <= input_mem_read;
+            mem_write  <= input_mem_write;
             {op_ld_b, op_ld_h, op_ld_bu, op_ld_hu, op_ld_w} <= input_mem_op_ld;
             alu_result <= input_alu_result;
         end

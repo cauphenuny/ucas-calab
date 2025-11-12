@@ -78,7 +78,8 @@ module stage_ex(
     output wire [ 1:0] data_sram_size,
     output wire [31:0] data_sram_addr,
     output wire [ 3:0] data_sram_wstrb,
-    output wire [31:0] data_sram_wdata
+    output wire [31:0] data_sram_wdata,
+    input  wire        data_sram_addr_ok
 );
 
     wire valid, readygo;
@@ -153,8 +154,9 @@ module stage_ex(
         else current_state <= next_state;
     end
 
-    assign readygo = ((current_state == STATE_REQ) & alu_output_valid)
-                   | (current_state == STATE_DONE)
+    assign readygo =  (~validout | ~is_store | ~is_load | (data_sram_req & data_sram_addr_ok)) & 
+                    (((current_state == STATE_REQ) & alu_output_valid)
+                   | (current_state == STATE_DONE))
                    ;
 
     wire alu_req_valid = valid && (current_state == STATE_REQ) && ~(older_ex & long_op) && ~cancel;
@@ -246,7 +248,7 @@ module stage_ex(
     wire is_load  = op_ld_w | op_ld_h | op_ld_hu | op_ld_b | op_ld_bu;
 
     assign data_sram_req = (validout && ~older_ex && ~ex_valid && ~older_ertn) 
-                            && (is_store | is_load);
+                            && (is_store | is_load)  && allowout;
 
     assign data_sram_wr  = (validout && ~older_ex && ~ex_valid && ~older_ertn) 
                             && is_store;
