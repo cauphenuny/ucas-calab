@@ -130,7 +130,8 @@ module mycpu_top(
     end
 
     assign pre_if_ready_go = inst_sram_req & inst_sram_addr_ok;
-    assign inst_sram_req = rst | (fs_allowin & (id_refreshing | flush) & ~if_next_ex_adef); // ?
+    // br_stall=1 时阻塞取指，防止 Load-to-Branch 时取到错误的指令
+    assign inst_sram_req = rst | (fs_allowin & (id_refreshing | flush) & ~if_next_ex_adef & ~br_stall);
     assign inst_sram_size  = 2'b10;   // inst固定4字节
     assign inst_sram_addr = rst ? ENTRYPOINT : nextpc;
 
@@ -346,6 +347,9 @@ module mycpu_top(
     wire [31:0] id_csr_rvalue;
     wire [31:0] ex_csr_rvalue;
     wire [31:0] mem_csr_rvalue;
+    
+    // br_stall: 转移指令计算未完成，阻塞取指
+    wire        br_stall;
 
     stage_id u_stage_id(
         .clk(clk),
@@ -368,6 +372,7 @@ module mycpu_top(
         .output_pc(),
         .output_br_target(br_target),
         .output_br_taken(br_taken),
+        .br_stall(br_stall),        // 连接 br_stall 信号
         .output_alu_src1(),
         .output_alu_src2(),
         .output_alu_op(),

@@ -16,6 +16,7 @@ module stage_id(
 
     output wire [31:0] output_br_target,
     output wire        output_br_taken,
+    output wire        br_stall,        // 转移指令计算未完成，阻塞取指
 
     output wire [31:0] output_alu_src1, output_alu_src2,
     output wire [20:0] output_alu_op,
@@ -528,6 +529,13 @@ module stage_id(
     assign output_csr_rvalue= csr_rvalue;
     assign output_is_csr    = is_csr | is_csr_r;
     assign output_is_ertn   = inst_ertn & valid;
+    
+    // br_stall: 转移指令计算未完成，需要阻塞取指
+    // 需要寄存器值的转移指令：beq, bne, blt, bge, bltu, bgeu, jirl
+    wire is_br_need_reg = inst_beq | inst_bne | inst_blt | inst_bge | 
+                          inst_bltu | inst_bgeu | inst_jirl;
+    assign br_stall = valid & is_br_need_reg & stall;
+    
     assign output_br_taken  = br_taken & ~stall; // when stall, can not take br_taken
     assign output_br_target = br_target;
     assign output_mem_data  = rkd_value;
