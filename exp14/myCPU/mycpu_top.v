@@ -43,13 +43,22 @@ module mycpu_top(
     end
 
 /**************** IF stage ****************/
+    reg         to_fs_valid; // pre-IF发出的请求是否被接收
+    wire        fs_allowin;
+    wire        pre_if_ready_go;
+
+    reg         if_valid;   // IF级是否有有效指令
+    reg  [31:0] if_inst_buf;  // 指令缓存
+    reg         if_inst_buf_valid; // 指令缓存是否有效
+    reg         if_need_drop; // 是否需要丢弃下一个返回的指令
+    wire        if_ready_go; // IF级是否ready
 
     wire [31:0] nextpc, seq_pc, br_target;
     reg  [31:0] pc;
     wire        br_taken, id_refreshing;
     wire        flush = (wb_ex | ertn_flush);
     wire        if_allowout;
-    wire        if_validout = valid;
+    wire        if_validout = if_valid;
     wire        if_ex_valid;
     wire [ 5:0] if_ecode;
     wire [ 8:0] if_esubcode;
@@ -66,11 +75,62 @@ module mycpu_top(
     assign seq_pc        = pc + 32'h4;
     assign nextpc        = ertn_flush ? ex_ra : (wb_ex ? ex_entry : (br_taken ? br_target : seq_pc));
 
+    always @(posedge clk) begin
+        if (rst) begin
+            if_inst_buf <= 32'b0;
+            if_inst_buf_valid <= 1'b0;
+        end else if (flush) begin
+            if_inst_buf_valid <= 1'b0;
+        end else if (inst_sram_data_ok & ~if_need_drop) begin
+            if (if_allowout) begin
+                // 可以立即流向下一级，不需要缓存
+                if_inst_buf_valid <= 1'b0;
+            end else begin
+                // 需要缓存
+                if_inst_buf <= inst_sram_rdata;
+                if_inst_buf_valid <= 1'b1;
+            end
+        end else if (if_allowout & if_inst_buf_valid) begin
+            // 缓存的指令流向下一级
+            if_inst_buf_valid <= 1'b0;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (rst) begin
+            if_need_drop <= 1'b0;
+        end else if (flush & to_fs_valid & ~fs_allowin) begin
+            // 异常，若有请求已被接收且IF级有指令，需要丢弃后续返回
+            if_need_drop <= 1'b1;
+        end else if (inst_sram_data_ok & if_need_drop) begin
+            // 丢弃一次后清除标记
+            if_need_drop <= 1'b0;
+        end
+    end
+
+    wire [31:0] if_inst = if_inst_buf_valid ? if_inst_buf : inst_sram_rdata;
+
+    assign if_ready_go = if_inst_buf_valid | (inst_sram_data_ok & ~if_need_drop);
+    assign fs_allowin = ~if_valid | (if_ready_go & if_allowout);
+
     assign if_next_ex_adef = nextpc[1:0] != 2'b00;
 
     localparam ENTRYPOINT = 32'h1c000000;
 
-    assign inst_sram_req = rst | ((id_refreshing | flush) & ~if_next_ex_adef);
+    // to_fs_valid: 记录pre-IF发出的请求是否被CPU外部接收 ？
+    always @(posedge clk) begin
+        if (rst) begin
+            to_fs_valid <= 1'b0;
+        end else if (flush) begin
+            // 异常清空：如果请求已被接收，需要标记丢弃后续返回的第一条指令
+            to_fs_valid <= pre_if_ready_go;
+        end else if (fs_allowin) begin
+            to_fs_valid <= pre_if_ready_go;
+        end
+    end
+
+    assign pre_if_ready_go = inst_sram_req & inst_sram_addr_ok;
+    assign inst_sram_req = rst | (fs_allowin & (id_refreshing | flush) & ~if_next_ex_adef); // ?
     assign inst_sram_size  = 2'b10;   // inst固定4字节
     assign inst_sram_addr = rst ? ENTRYPOINT : nextpc;
 
@@ -82,9 +142,19 @@ module mycpu_top(
             // On exception/ERTN, override stall and update PC immediately
             pc <= nextpc;
             if_ex_adef <= if_next_ex_adef;
-        end else if (id_refreshing) begin
+        end else if (pre_if_ready_go & fs_allowin) begin
             pc <= nextpc;
             if_ex_adef <= if_next_ex_adef;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (rst) begin
+            if_valid <= 1'b0;
+        end else if (flush) begin
+            if_valid <= 1'b0;
+        end else if (fs_allowin) begin
+            if_valid <= to_fs_valid;
         end
     end
 
@@ -263,7 +333,7 @@ module mycpu_top(
         .rf_rdata2(rf_rdata2),
 
         .input_pc(pc),
-        .input_inst(inst_sram_rdata),
+        .input_inst(if_inst),
 
         .output_pc(),
         .output_br_target(br_target),
