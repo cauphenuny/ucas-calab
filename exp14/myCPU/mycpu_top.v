@@ -139,7 +139,7 @@ module mycpu_top(
                 // 有分支来临，缓存分支信息
                 br_pending <= 1'b1;
                 br_target_buf <= br_target;
-            end else if (br_pending && pre_fs_state == IDLE && fs_allowin) begin
+            end else if (br_pending && pre_if_ready_go && fs_allowin) begin
                 // 缓存的分支被状态机采样，清除标记
                 br_pending <= 1'b0;
             end
