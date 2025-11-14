@@ -27,7 +27,9 @@ module stage_ex(
     input  wire        input_mem_write,
     input  wire [2:0]  input_mem_op_st,
     output wire        output_mem_read,
+    output wire        output_mem_write,
     output wire [4:0]  output_mem_op_ld,
+    output wire        output_is_mem_op,
 
     // ....data processed in EX stage
     input  wire [31:0] input_alu_src1, input_alu_src2,
@@ -200,7 +202,8 @@ module stage_ex(
 
     assign output_alu_result = alu_result;
     assign forward_data = alu_result;
-    assign forward_ready = readygo & ~output_mem_read; // NOTE: not ready if data not prepared or is mem_read (need to be passed to MEM stage for reading actual data)
+    // 前递信号更改：只有当EX级能流向MEM级时，前递数据才真正ready
+    assign forward_ready = validout & ~output_mem_read; // NOTE: not ready if data not prepared or is mem_read (need to be passed to MEM stage for reading actual data)
 
 /**************** hold trace data ****************/
 
@@ -247,6 +250,8 @@ module stage_ex(
     wire is_store = op_st_w | op_st_h | op_st_b;
     wire is_load  = op_ld_w | op_ld_h | op_ld_hu | op_ld_b | op_ld_bu;
 
+    assign output_is_mem_op = is_store | is_load; 
+
     assign data_sram_req = (validout && ~older_ex && ~ex_valid && ~older_ertn) 
                             && (is_store | is_load)  && allowout;
 
@@ -268,7 +273,7 @@ module stage_ex(
                                             : 4'b0000)
                                 : 4'b0000)
                              : 4'b0000;
-    assign data_sram_en = ~ex_valid;
+    // assign data_sram_en = ~ex_valid;
     assign data_sram_addr  = alu_result;
     assign data_sram_wdata = op_st_b ? {4{mem_data[7:0]}}
                              : op_st_h ? {2{mem_data[15:0]}}
@@ -276,6 +281,7 @@ module stage_ex(
                              : 32'h0;
 
     assign output_mem_read = mem_read;
+    assign output_mem_write = mem_write;
     assign output_mem_op_ld = mem_op_ld;
 
 /**************** exception info ****************/

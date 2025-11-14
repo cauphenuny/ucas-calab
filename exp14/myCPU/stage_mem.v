@@ -21,6 +21,7 @@ module stage_mem(
 
     // ....data processed in MEM stage
     input  wire        input_mem_read,
+    input  wire        input_mem_write,
     input  wire [4:0]  input_mem_op_ld,
     input  wire [31:0] input_alu_result,
 
@@ -117,7 +118,8 @@ module stage_mem(
 
     assign output_rf_wdata = mem_read ? mem_read_result : alu_result;
     assign forward_data = output_rf_wdata;
-    assign forward_ready = readygo;
+    // 前递信号更改：只有当MEM级能流向WB级时，前递数据才真正ready
+    assign forward_ready = validout;
 
 /**************** exception info ****************/
     reg        ex_valid_r;
