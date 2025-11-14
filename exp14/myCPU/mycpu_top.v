@@ -63,7 +63,11 @@ module mycpu_top(
 
     assign id_refreshing = if_allowout & if_validout;
     assign seq_pc        = pc + 32'h4;
-    assign nextpc        = first_fetch ? pc : (ertn_flush ? ex_ra : (wb_ex ? ex_entry : (br_taken ? br_target : seq_pc)));
+    assign nextpc        = br_pending ? br_target_buf :
+                           first_fetch ? pc : 
+                           (ertn_flush ? ex_ra : 
+                           (wb_ex ? ex_entry : 
+                           (br_taken ? br_target : seq_pc)));
 
     assign if_ready_go = if_inst_buf_valid | (inst_sram_data_ok & ~if_need_drop);
     assign fs_allowin = (~if_valid | (if_ready_go & if_allowout)) & ~br_stall;
@@ -114,6 +118,8 @@ module mycpu_top(
     end
 
     reg first_fetch;
+    reg        br_pending;      // 有待处理的分支
+    reg [31:0] br_target_buf;   // 缓存的分支目标
 
     always @(posedge clk) begin
         if (rst) begin
@@ -122,7 +128,22 @@ module mycpu_top(
             inst_sram_addr <= ENTRYPOINT;
             if_inst_buf <= 32'b0;
             first_fetch <= 1'b1;
+            br_pending <= 1'b0;
+            br_target_buf <= 32'h0;
         end else begin
+            // 分支缓存逻辑：只要有分支就缓存，等待状态机处理
+            if (flush) begin
+                // 异常或ERTN时清除待处理的分支
+                br_pending <= 1'b0;
+            end else if (br_taken) begin
+                // 有分支来临，缓存分支信息
+                br_pending <= 1'b1;
+                br_target_buf <= br_target;
+            end else if (br_pending && pre_fs_state == IDLE && fs_allowin) begin
+                // 缓存的分支被状态机采样，清除标记
+                br_pending <= 1'b0;
+            end
+
             case (pre_fs_state)
             IDLE: begin
                 if (fs_allowin) begin
