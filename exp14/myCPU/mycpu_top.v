@@ -299,36 +299,6 @@ module mycpu_top(
                        hazard_wb2 ? wb_forward_data :
                        raw_rf_rdata2;
 
-    // mem记录需要丢弃的访存返回数据
-    reg [1:0] mem_drop_cnt;    // 最多丢弃2个返回（只有ex与mem阶段最多2个）
-    
-    always @(posedge clk) begin
-        if (rst) begin
-            mem_drop_cnt <= 2'b0;
-        end else begin
-            case ({flush, data_sram_data_ok})
-                2'b00: mem_drop_cnt <= mem_drop_cnt;
-                2'b01: mem_drop_cnt <= (mem_drop_cnt > 0) ? mem_drop_cnt - 1 : 2'b0;
-                2'b10: begin
-                    // 异常清空时，统计有多少个已发出但未完成的访存请求
-                    if (u_stage_ex.validout && u_stage_ex.output_is_mem_op && 
-                        data_sram_req && data_sram_addr_ok) begin
-                        mem_drop_cnt <= mem_drop_cnt + 1;    // EX级有一个刚被接收
-                    end
-                    if (u_stage_mem.valid && u_stage_mem.mem_read) begin
-                        mem_drop_cnt <= mem_drop_cnt + 1;    // MEM级有一个等待返回
-                    end
-                end
-                2'b11: begin
-                    // 异常的同时有数据返回
-                    mem_drop_cnt <= mem_drop_cnt;  // 一进一出
-                end
-            endcase
-        end
-    end
-    
-    wire mem_data_ok_real = data_sram_data_ok && (mem_drop_cnt == 0);
-
     // CSR hazard: results are only available at WB (no forwarding). If a CSR writer
     // is in EX/MEM, treat it as not-ready and stall the reader in ID.
     wire ex_ready_for_id  = u_stage_ex.output_is_csr  ? 1'b0 : ex_forward_ready;
@@ -588,7 +558,7 @@ module mycpu_top(
         .output_csr_rvalue(mem_csr_rvalue),
 
     .data_sram_rdata(data_sram_rdata),
-    .data_sram_data_ok(mem_data_ok_real)
+    .data_sram_data_ok(data_sram_data_ok)
     );
 
     wire        wb_valid;

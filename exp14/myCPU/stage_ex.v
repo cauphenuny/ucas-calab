@@ -105,6 +105,10 @@ module stage_ex(
     wire [31:0] alu_output, alu_result;
     wire alu_output_valid, alu_request_valid;
 
+    // 访存请求控制信号
+    reg data_req_en;      // 控制是否可以发送新的访存请求
+    reg req_ok_hold;      // 记录访存请求是否已被接收
+
 /**************** state machine ****************/
 
     // INIT -> REQ --> WAIT -->+
@@ -156,10 +160,33 @@ module stage_ex(
         else current_state <= next_state;
     end
 
-    assign readygo =  ~valid | ((!is_mem_op || (data_sram_req & data_sram_addr_ok)) & 
-                    (((current_state == STATE_REQ) & alu_output_valid)
-                   | (current_state == STATE_DONE)))
-                   ;
+    // 访存请求握手状态保持逻辑
+    always @(posedge clk) begin
+        if (rst)
+            req_ok_hold <= 1'b0;
+        else if (readygo & allowout)  // 指令流向下一级，清除握手状态
+            req_ok_hold <= 1'b0;
+        else if (data_sram_req & data_sram_addr_ok)  // 握手成功，保持状态
+            req_ok_hold <= 1'b1;
+    end
+
+    // 访存请求使能控制逻辑
+    always @(posedge clk) begin
+        if (rst)
+            data_req_en <= 1'b1;
+        else if (readygo & allowout)  // 指令流向下一级，恢复请求使能
+            data_req_en <= 1'b1;
+        else if (data_sram_req & data_sram_addr_ok)  // 握手成功，停止发送请求
+            data_req_en <= 1'b0;
+    end
+
+    assign readygo =  ~valid | (
+                        // ALU计算完成条件
+                        (((current_state == STATE_REQ) & alu_output_valid) | (current_state == STATE_DONE))
+                        & 
+                        // 访存握手完成条件
+                        (~is_mem_op | (data_sram_req & data_sram_addr_ok) | req_ok_hold | ex_valid)
+                    );
 
     wire alu_req_valid = valid && (current_state == STATE_REQ) && ~(older_ex & long_op) && ~cancel;
 
@@ -254,7 +281,7 @@ module stage_ex(
     assign output_is_mem_op = is_mem_op; 
 
     assign data_sram_req = (valid && ~older_ex && ~ex_valid && ~older_ertn) 
-                            && is_mem_op && allowout;
+                            && is_mem_op && data_req_en;
 
     assign data_sram_wr  = (validout && ~older_ex && ~ex_valid && ~older_ertn) 
                             && is_store;
