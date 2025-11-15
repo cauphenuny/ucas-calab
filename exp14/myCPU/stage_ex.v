@@ -156,9 +156,9 @@ module stage_ex(
         else current_state <= next_state;
     end
 
-    assign readygo =  (~validout | ~is_store | ~is_load | (data_sram_req & data_sram_addr_ok)) & 
+    assign readygo =  ~valid | ((!is_mem_op || (data_sram_req & data_sram_addr_ok)) & 
                     (((current_state == STATE_REQ) & alu_output_valid)
-                   | (current_state == STATE_DONE))
+                   | (current_state == STATE_DONE)))
                    ;
 
     wire alu_req_valid = valid && (current_state == STATE_REQ) && ~(older_ex & long_op) && ~cancel;
@@ -249,11 +249,12 @@ module stage_ex(
 
     wire is_store = op_st_w | op_st_h | op_st_b;
     wire is_load  = op_ld_w | op_ld_h | op_ld_hu | op_ld_b | op_ld_bu;
+    wire is_mem_op = is_store | is_load;
 
-    assign output_is_mem_op = is_store | is_load; 
+    assign output_is_mem_op = is_mem_op; 
 
-    assign data_sram_req = (validout && ~older_ex && ~ex_valid && ~older_ertn) 
-                            && (is_store | is_load)  && allowout;
+    assign data_sram_req = (valid && ~older_ex && ~ex_valid && ~older_ertn) 
+                            && is_mem_op && allowout;
 
     assign data_sram_wr  = (validout && ~older_ex && ~ex_valid && ~older_ertn) 
                             && is_store;
@@ -273,6 +274,7 @@ module stage_ex(
                                             : 4'b0000)
                                 : 4'b0000)
                              : 4'b0000;
+
     // assign data_sram_en = ~ex_valid;
     assign data_sram_addr  = alu_result;
     assign data_sram_wdata = op_st_b ? {4{mem_data[7:0]}}
