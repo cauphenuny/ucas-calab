@@ -111,7 +111,7 @@ module mycpu_top(
         end else if (flush && (if_have_inst | pre_if_ready_go)) begin
             // 异常，若有请求已被接收，需要丢弃后续返回
             if_need_drop <= 1'b1;
-        end else if (inst_sram_addr_ok & if_need_drop) begin
+        end else if (inst_sram_data_ok) begin
             // 丢弃一次后清除标记
             if_need_drop <= 1'b0;
         end

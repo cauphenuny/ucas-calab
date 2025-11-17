@@ -67,10 +67,11 @@ module stage_mem(
 );
 
     wire valid;
-    wire mem_op_pending;
+    wire is_mem_op;
     wire drop_now;
     wire data_ok_effective;
-    wire readygo = valid ? (~mem_op_pending | data_ok_effective) : 1'b1;
+
+    wire readygo = ~valid | (~is_mem_op | data_ok_effective);
 
     cancelable_pipeline pipe(
         .clk(clk), .rst(rst),
@@ -89,8 +90,8 @@ module stage_mem(
     reg [31:0]  alu_result;
     reg         drop_data_ok;
 
-    assign mem_op_pending   = mem_read | mem_write;
-    assign drop_now         = cancel & valid & mem_op_pending;
+    assign is_mem_op   = mem_read | mem_write;
+    assign drop_now         = cancel & valid & is_mem_op;
     assign data_ok_effective= data_sram_data_ok & ~(drop_data_ok | drop_now);
 
     always @(posedge clk) begin
