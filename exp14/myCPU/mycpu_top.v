@@ -63,14 +63,15 @@ module mycpu_top(
 
     assign id_refreshing = if_allowout & if_validout;
     assign seq_pc        = pc + 32'h4;
-    assign nextpc        = br_pending ? br_target_buf :
-                           first_fetch ? pc : 
+    assign nextpc        = use_pc_fetch ? pc : 
                            (ertn_flush ? ex_ra : 
                            (wb_ex ? ex_entry : 
+                            br_pending ? br_target_buf :
                            (br_taken ? br_target : seq_pc)));
 
     assign if_ready_go = if_inst_buf_valid | (inst_sram_data_ok & ~if_need_drop);
-    assign fs_allowin = (~if_valid | (if_ready_go & if_allowout)) & ~br_stall;
+    // assign fs_allowin = ~if_valid | ((if_ready_go & if_allowout) & ~br_stall);
+    assign fs_allowin = (~if_valid | (if_ready_go & if_allowout)) & (~br_stall | flush);
 
     assign if_next_ex_adef = nextpc[1:0] != 2'b00;
 
@@ -117,7 +118,7 @@ module mycpu_top(
         end
     end
 
-    reg first_fetch;
+    reg use_pc_fetch; // 第一次取指和异常跳转后使用 pc 进行取指
     reg        br_pending;      // 有待处理的分支
     reg [31:0] br_target_buf;   // 缓存的分支目标
 
@@ -127,7 +128,7 @@ module mycpu_top(
             inst_sram_req <= 1'b0;
             inst_sram_addr <= ENTRYPOINT;
             if_inst_buf <= 32'b0;
-            first_fetch <= 1'b1;
+            use_pc_fetch <= 1'b1;
             br_pending <= 1'b0;
             br_target_buf <= 32'h0;
         end else begin
@@ -135,6 +136,7 @@ module mycpu_top(
             if (flush) begin
                 // 异常或ERTN时清除待处理的分支
                 br_pending <= 1'b0;
+                use_pc_fetch <= 1'b1;
             end else if (br_taken) begin
                 // 有分支来临，缓存分支信息
                 br_pending <= 1'b1;
@@ -153,18 +155,20 @@ module mycpu_top(
                 end
             end
             WAIT_ADDR: begin
-                if (inst_sram_addr_ok && inst_sram_req) begin
-                    // 地址握手成功
-                    inst_sram_req <= 1'b0; // 停拉 req，等待数据
-                    pre_fs_state <= WAIT_DATA;
-                    first_fetch <= 1'b0;
-                end else if (flush) begin
+                if (flush) begin
                     inst_sram_req <= 1'b0;
                     pre_fs_state <= IDLE;
+                end else if (inst_sram_addr_ok && inst_sram_req) begin
+                    inst_sram_req <= 1'b0;
+                    pre_fs_state <= WAIT_DATA;
+                    use_pc_fetch <= 1'b0;
                 end
             end
             WAIT_DATA: begin
-                if (inst_sram_data_ok) begin
+                if (flush) begin
+                    // 异常时丢弃数据
+                    pre_fs_state <= IDLE;
+                end else if (inst_sram_data_ok) begin
                     if (!if_need_drop) begin
                         // 正常写入 IF
                         if (!if_allowout) begin
