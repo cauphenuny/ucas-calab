@@ -34,21 +34,13 @@ module mycpu_top(
     always @(posedge clk) rst <= ~resetn;
 
 /**************** IF stage ****************/
-    wire        fs_allowin;
-    wire        pre_if_ready_go;
-
-    reg         if_have_inst;   // IF级是否有尚未下发的指令
-    reg  [31:0] if_inst_buf;  // 指令缓存
-    reg         if_inst_buf_valid; // 指令缓存是否有效
-    reg         if_need_drop; // 是否需要丢弃下一个返回的指令
-    wire        if_ready_go; // IF级是否ready
-
     wire [31:0] nextpc, seq_pc, br_target;
     reg  [31:0] pc;
     wire        br_taken, id_refreshing;
     wire        flush = (wb_ex | ertn_flush);
     wire        if_allowout;
-    wire        if_validout = if_have_inst & if_ready_go & ~if_need_drop;
+    wire        if_refreshing;
+    wire        if_validout;
     wire        if_ex_valid;
     wire [ 5:0] if_ecode;
     wire [ 8:0] if_esubcode;
@@ -58,167 +50,63 @@ module mycpu_top(
     wire [13:0] if_csr_num;
     wire [31:0] if_csr_wmask;
     wire [31:0] if_csr_wvalue;
-    reg         if_ex_adef; // ADEF exception
-    wire        if_next_ex_adef;
+    wire [31:0] if_pc;
+    wire [31:0] if_inst;
 
-    assign id_refreshing = if_allowout & if_validout;
     assign seq_pc        = pc + 32'h4;
-    assign nextpc        = use_pc_fetch ? pc : 
-                           (ertn_flush ? ex_ra : 
-                           (wb_ex ? ex_entry : 
-                            br_pending ? br_target_buf :
-                           (br_taken ? br_target : seq_pc)));
-
-    assign if_ready_go = if_inst_buf_valid | inst_sram_data_ok;
-    assign fs_allowin = (~if_validout | (if_ready_go & if_allowout)) & (~br_stall | flush);
-
-    assign if_next_ex_adef = nextpc[1:0] != 2'b00;
+    wire if_allowin;
 
     localparam ENTRYPOINT = 32'h1c000000;
-
-    assign pre_if_ready_go = inst_sram_req & inst_sram_addr_ok;
-    // br_stall=1 时阻塞取指，防止 Load-to-Branch 时取到错误的指令
-    // assign inst_sram_req = rst | (fs_allowin & (id_refreshing | flush) & ~if_next_ex_adef & ~br_stall);
-    assign inst_sram_size  = 2'b10;   // inst固定4字节
-    // assign inst_sram_addr = rst ? ENTRYPOINT : nextpc;
-
-    localparam IDLE=2'd0, WAIT_ADDR=2'd1, WAIT_DATA=2'd2;
-    reg [1:0] pre_fs_state;
-
-    always @(posedge clk) begin
-        if (rst) begin
-            if_inst_buf_valid <= 1'b0;
-        end else if (flush) begin
-            if_inst_buf_valid <= 1'b0;
-        end else if (inst_sram_data_ok & !if_need_drop) begin
-            if (if_allowout) begin
-                // 可以立即流向下一级，不需要缓存
-                if_inst_buf_valid <= 1'b0;
-            end else begin
-                // 需要缓存
-                if_inst_buf_valid <= 1'b1;
-            end
-        end else if (if_allowout & if_inst_buf_valid) begin
-            // 缓存的指令流向下一级
-            if_inst_buf_valid <= 1'b0;
-        end
-    end
-
-    // 异常时丢弃指令
-    always @(posedge clk) begin
-        if (rst) begin
-            if_need_drop <= 1'b0;
-        end else if (flush && (if_have_inst | pre_if_ready_go)) begin
-            // 异常，若有请求已被接收，需要丢弃后续返回
-            if_need_drop <= 1'b1;
-        end else if (inst_sram_data_ok) begin
-            // 丢弃一次后清除标记
-            if_need_drop <= 1'b0;
-        end
-    end
-
-    reg use_pc_fetch; // 第一次取指和异常跳转后使用 pc 进行取指
-    reg        br_pending;      // 有待处理的分支
-    reg [31:0] br_target_buf;   // 缓存的分支目标
-
-    always @(posedge clk) begin
-        if (rst) begin
-            pre_fs_state <= IDLE;
-            inst_sram_req <= 1'b0;
-            inst_sram_addr <= ENTRYPOINT;
-            if_inst_buf <= 32'b0;
-            use_pc_fetch <= 1'b1;
-            br_pending <= 1'b0;
-            br_target_buf <= 32'h0;
-        end else begin
-            // 分支缓存逻辑：只要有分支就缓存，等待状态机处理
-            if (flush) begin
-                // 异常或ERTN时清除待处理的分支
-                br_pending <= 1'b0;
-                use_pc_fetch <= 1'b1;
-            end else if (br_taken) begin
-                // 有分支来临，缓存分支信息
-                br_pending <= 1'b1;
-                br_target_buf <= br_target;
-            end else if (br_pending && pre_if_ready_go && fs_allowin) begin
-                // 缓存的分支被状态机采样，清除标记
-                br_pending <= 1'b0;
-            end
-
-            case (pre_fs_state)
-            IDLE: begin
-                if (fs_allowin) begin
-                    inst_sram_addr <= nextpc;
-                    inst_sram_req <= 1'b1;
-                    pre_fs_state <= WAIT_ADDR;
-                end
-            end
-            WAIT_ADDR: begin
-                if (flush) begin
-                    inst_sram_req <= 1'b0;
-                    pre_fs_state <= IDLE;
-                end else if (inst_sram_addr_ok && inst_sram_req) begin
-                    inst_sram_req <= 1'b0;
-                    pre_fs_state <= WAIT_DATA;
-                    use_pc_fetch <= 1'b0;
-                end
-            end
-            WAIT_DATA: begin
-                if (flush) begin
-                    // 异常时丢弃数据
-                    pre_fs_state <= IDLE;
-                end else if (inst_sram_data_ok) begin
-                    if (!if_need_drop) begin
-                        // 正常写入 IF
-                        if (!if_allowout) begin
-                            if_inst_buf <= inst_sram_rdata;
-                        end
-                    end
-                    pre_fs_state <= IDLE;
-                end
-            end
-            endcase
-        end
-    end
-
-    wire [31:0] if_inst = if_inst_buf_valid ? if_inst_buf : inst_sram_rdata;
 
     always @(posedge clk) begin
         if (rst) begin
             pc <= ENTRYPOINT;
-            if_ex_adef <= 1'b0;
-        end else if (flush) begin
-            // On exception/ERTN, override stall and update PC immediately
-            pc <= nextpc;
-            if_ex_adef <= if_next_ex_adef;
-        end else if (pre_if_ready_go & fs_allowin) begin
-            pc <= nextpc;
-            if_ex_adef <= if_next_ex_adef;
+        end else if (ertn_flush) begin
+            pc <= ex_ra;
+        end else if (wb_ex) begin
+            pc <= ex_entry;
+        end else if (br_taken) begin
+            pc <= br_target;
+        end else if (if_refreshing) begin
+            pc <= seq_pc;
         end
     end
 
-    always @(posedge clk) begin
-        if (rst) begin
-            if_have_inst <= 1'b0;
-        end else if (flush) begin
-            if_have_inst <= 1'b0;
-        end else if (pre_if_ready_go) begin
-            if_have_inst <= 1'b1;
-        end else if (if_allowout && if_validout) begin
-            if_have_inst <= 1'b0;
-        end
-    end
+    stage_if u_stage_if(
+        .clk(clk),
+        .rst(rst),
+        .allowin(if_allowin),
+        .validin(~br_taken & ~flush),
+        .validout(if_validout),
+        .allowout(if_allowout),
+        .cancel(flush),
 
-    assign if_ex_valid = if_ex_adef;
-    assign if_ecode = `ECODE_ADEF;
-    assign if_esubcode = `ESUBCODE_ADEF;
+        .input_pc(pc),
+        .output_pc(if_pc),
+        .output_inst(if_inst),
 
-    assign if_is_csr = if_ex_adef;
-    assign if_csr_en = if_ex_adef;
-    assign if_csr_num = `CSR_BADV;
-    assign if_csr_we = if_ex_adef;
-    assign if_csr_wmask = 32'hffff_ffff;
-    assign if_csr_wvalue = pc;
+        .output_ecode(if_ecode),
+        .output_esubcode(if_esubcode),
+        .output_is_csr(if_is_csr),
+        .output_csr_en(if_csr_en),
+        .output_csr_we(if_csr_we),
+        .output_csr_num(if_csr_num),
+        .output_csr_wmask(if_csr_wmask),
+        .output_csr_wvalue(if_csr_wvalue),
+        .output_ex_valid(if_ex_valid),
+
+        .inst_sram_req(inst_sram_req),
+        .inst_sram_wr(inst_sram_wr),
+        .inst_sram_size(inst_sram_size),
+        .inst_sram_addr(inst_sram_addr),
+        .inst_sram_wstrb(inst_sram_wstrb),
+        .inst_sram_wdata(inst_sram_wdata),
+        .inst_sram_rdata(inst_sram_rdata),
+        .inst_sram_addr_ok(inst_sram_addr_ok),
+        .inst_sram_data_ok(inst_sram_data_ok)
+    );
+
+    assign if_refreshing = u_stage_if.pipe.refreshing;
 
 /**************** other units ****************/
 
@@ -386,7 +274,7 @@ module mycpu_top(
         .rf_rdata1(rf_rdata1),
         .rf_rdata2(rf_rdata2),
 
-        .input_pc(pc),
+        .input_pc(if_pc),
         .input_inst(if_inst),
 
         .output_pc(),
