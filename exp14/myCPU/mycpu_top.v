@@ -37,7 +37,7 @@ module mycpu_top(
     wire        fs_allowin;
     wire        pre_if_ready_go;
 
-    reg         if_valid;   // IF级是否有尚未下发的指令
+    reg         if_have_inst;   // IF级是否有尚未下发的指令
     reg  [31:0] if_inst_buf;  // 指令缓存
     reg         if_inst_buf_valid; // 指令缓存是否有效
     reg         if_need_drop; // 是否需要丢弃下一个返回的指令
@@ -48,7 +48,7 @@ module mycpu_top(
     wire        br_taken, id_refreshing;
     wire        flush = (wb_ex | ertn_flush);
     wire        if_allowout;
-    wire        if_validout = if_valid & if_ready_go;
+    wire        if_validout = if_have_inst & if_ready_go & ~if_need_drop;
     wire        if_ex_valid;
     wire [ 5:0] if_ecode;
     wire [ 8:0] if_esubcode;
@@ -69,9 +69,8 @@ module mycpu_top(
                             br_pending ? br_target_buf :
                            (br_taken ? br_target : seq_pc)));
 
-    assign if_ready_go = if_inst_buf_valid | (inst_sram_data_ok & ~if_need_drop);
-    // assign fs_allowin = ~if_valid | ((if_ready_go & if_allowout) & ~br_stall);
-    assign fs_allowin = (~if_valid | (if_ready_go & if_allowout)) & (~br_stall | flush);
+    assign if_ready_go = if_inst_buf_valid | inst_sram_data_ok;
+    assign fs_allowin = (~if_validout | (if_ready_go & if_allowout)) & (~br_stall | flush);
 
     assign if_next_ex_adef = nextpc[1:0] != 2'b00;
 
@@ -109,10 +108,10 @@ module mycpu_top(
     always @(posedge clk) begin
         if (rst) begin
             if_need_drop <= 1'b0;
-        end else if (flush && (if_valid | pre_if_ready_go)) begin
+        end else if (flush && (if_have_inst | pre_if_ready_go)) begin
             // 异常，若有请求已被接收，需要丢弃后续返回
             if_need_drop <= 1'b1;
-        end else if (inst_sram_data_ok & if_need_drop) begin
+        end else if (inst_sram_addr_ok & if_need_drop) begin
             // 丢弃一次后清除标记
             if_need_drop <= 1'b0;
         end
@@ -200,13 +199,13 @@ module mycpu_top(
 
     always @(posedge clk) begin
         if (rst) begin
-            if_valid <= 1'b0;
+            if_have_inst <= 1'b0;
         end else if (flush) begin
-            if_valid <= 1'b0;
+            if_have_inst <= 1'b0;
         end else if (pre_if_ready_go) begin
-            if_valid <= 1'b1;
+            if_have_inst <= 1'b1;
         end else if (if_allowout && if_validout) begin
-            if_valid <= 1'b0;
+            if_have_inst <= 1'b0;
         end
     end
 
