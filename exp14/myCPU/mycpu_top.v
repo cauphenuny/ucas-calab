@@ -55,6 +55,8 @@ module mycpu_top(
     wire [31:0] if_pc;
     wire [31:0] if_inst;
 
+    wire addr_sending;
+
     assign seq_pc = pc + 32'h4;
     assign nextpc = ertn_flush ? ex_ra :
                     wb_ex ? ex_entry :
@@ -62,7 +64,7 @@ module mycpu_top(
                     if_refreshing ? seq_pc :
                     pc;
 
-    localparam ENTRYPOINT = 32'h1bfffffc;
+    localparam ENTRYPOINT = 32'h1c000000;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -73,20 +75,21 @@ module mycpu_top(
     end
 
     reg addr_sent;
+    assign addr_sending = inst_sram_req & inst_sram_addr_ok;
 
     always @(posedge clk) begin
         if (rst) begin
             addr_sent <= 1'b0;
         end else if (if_refreshing) begin
             addr_sent <= 1'b0;
-        end else if (inst_sram_addr_ok && inst_sram_req) begin
+        end else if (addr_sending) begin
             addr_sent <= 1'b1;
         end
     end
 
     assign if_validin = addr_sent;
-    assign inst_sram_req = ~addr_sent;
-    assign inst_sram_addr = nextpc;
+    assign inst_sram_req = ~addr_sent & ~br_taken;
+    assign inst_sram_addr = pc;
     assign inst_sram_wr = 1'b0;
     assign inst_sram_size = 2'b10; // word
     assign inst_sram_wstrb = 4'b0;
@@ -99,9 +102,10 @@ module mycpu_top(
         .validin(if_validin),
         .validout(if_validout),
         .allowout(if_allowout),
-        .cancel(flush),
+        .cancelin(flush),
+        .cancelout(flush),
 
-        .input_pc(nextpc),
+        .input_pc(pc),
         .output_pc(if_pc),
         .output_inst(if_inst),
 

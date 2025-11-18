@@ -6,7 +6,7 @@ module stage_if(
     // pipeline control
     input wire allowout, validin,
     output wire allowin, validout,
-    input wire cancel,
+    input wire cancelin, cancelout,
 
     // pipeline data
     input wire [31:0] input_pc,
@@ -59,14 +59,16 @@ module stage_if(
     always @(posedge clk) begin
         if (rst) begin
             cancelled <= 1'b0;
+        end else if (cancelin) begin
+            cancelled <= 1'b1;
         end else if (allowin) begin
             cancelled <= 1'b0;
-        end else if (cancel) begin
+        end else if (cancelout) begin
             cancelled <= 1'b1;
         end
     end
 
-    assign validout = raw_validout & ~cancelled & ~cancel;
+    assign validout = raw_validout & ~cancelled & ~cancelout;
 
     reg [31:0] pc, inst;
     wire except_adef = (pc[1:0] != 2'b0);
@@ -99,7 +101,7 @@ module stage_if(
         end
     end
 
-    assign readygo = already_ok | inst_sram_data_ok;
+    assign readygo = already_ok;
 
     // assign inst_sram_addr = pc;
     // assign inst_sram_req = ~except_adef & (state == REQ) & valid;
@@ -109,7 +111,7 @@ module stage_if(
     // assign inst_sram_wdata = 32'h0;
 
     assign output_pc = pc;
-    assign output_inst = inst_sram_data_ok ? inst_sram_rdata : inst;
+    assign output_inst = inst;
 
     assign output_ex_valid = except_adef & validout;
     assign output_ecode = `ECODE_ADEF;
