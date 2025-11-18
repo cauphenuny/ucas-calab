@@ -70,8 +70,9 @@ module stage_mem(
     wire is_mem_op;
     wire drop_now;
     wire data_ok_effective;
+    wire have_exception;
 
-    wire readygo = ~valid | (~is_mem_op | data_ok_effective);
+    wire readygo = ~valid | (~is_mem_op | data_ok_effective | have_exception);
 
     cancelable_pipeline pipe(
         .clk(clk), .rst(rst),
@@ -160,6 +161,8 @@ module stage_mem(
     assign output_ex_valid  = ex_valid_r && valid;
     assign output_ecode     = ecode_r;
     assign output_esubcode  = esubcode_r;
+
+    assign have_exception = ex_valid_r;
 
 /**************** CSR bundle & ERTN ****************/
     reg        csr_en_r;
