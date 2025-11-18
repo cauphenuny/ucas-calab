@@ -112,7 +112,9 @@ module stage_if(
                 end
             end
             REQ: begin
-                if (inst_sram_req & inst_sram_addr_ok) begin
+                if (except_adef) begin
+                    next_state = RESP;
+                end else if (inst_sram_req & inst_sram_addr_ok) begin
                     next_state = WAIT;
                 end else begin
                     next_state = REQ;
