@@ -54,15 +54,15 @@ module stage_if(
 
     reg cancelled;
 
-    assign validout = raw_validout & ~cancelled & ~cancel;
+    wire refreshing = allowin & validin;
 
     always @(posedge clk) begin
         if (rst) begin
             cancelled <= 1'b0;
-        end else if (cancel & valid) begin
-            cancelled <= 1'b1;
-        end else if (pipe.refreshing) begin
+        end else if (allowin) begin
             cancelled <= 1'b0;
+        end else if (cancel) begin
+            cancelled <= 1'b1;
         end
     end
 
@@ -72,8 +72,16 @@ module stage_if(
     always @(posedge clk) begin
         if (rst) begin
             pc <= 32'h0;
-        end else if (pipe.refreshing) begin
+        end else if (refreshing) begin
             pc <= input_pc;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (rst) begin
+            inst <= 32'h0;
+        end else if (inst_sram_data_ok) begin
+            inst <= inst_sram_rdata;
         end
     end
 
@@ -83,6 +91,8 @@ module stage_if(
                 RESP = 2'd3;
     
     reg [1:0] state, next_state;
+
+    assign validout = raw_validout & ~cancelled & ~cancel & (state == RESP);
 
     always @(posedge clk) begin
         if (rst) begin
@@ -95,14 +105,14 @@ module stage_if(
     always @(*) begin
         case (state)
             IDLE: begin
-                if (pipe.refreshing) begin
+                if (refreshing | valid) begin
                     next_state = REQ;
                 end else begin
                     next_state = IDLE;
                 end
             end
             REQ: begin
-                if (inst_sram_addr_ok) begin
+                if (inst_sram_req & inst_sram_addr_ok) begin
                     next_state = WAIT;
                 end else begin
                     next_state = REQ;
@@ -110,13 +120,16 @@ module stage_if(
             end
             WAIT: begin
                 if (inst_sram_data_ok) begin
-                    if (pipe.refreshing) begin
-                        next_state = REQ;
-                    end else begin
-                        next_state = IDLE;
-                    end
+                    next_state = RESP;
                 end else begin
                     next_state = WAIT;
+                end
+            end
+            RESP: begin
+                if (allowout) begin
+                    next_state = IDLE;
+                end else begin
+                    next_state = RESP;
                 end
             end
             default: begin
@@ -125,17 +138,17 @@ module stage_if(
         endcase
     end
 
-    assign readygo = (state == WAIT && inst_sram_addr_ok) || (state == IDLE);
+    assign readygo = state == RESP;
 
     assign inst_sram_addr = pc;
-    assign inst_sram_req = ~except_adef & (state == REQ);
+    assign inst_sram_req = ~except_adef & (state == REQ) & valid;
     assign inst_sram_wr = 1'b0;
     assign inst_sram_wstrb = 4'b0;
     assign inst_sram_size = 2'b10; // word
     assign inst_sram_wdata = 32'h0;
 
     assign output_pc = pc;
-    assign output_inst = inst;
+    assign output_inst = (state == WAIT && inst_sram_addr_ok) ? inst_sram_rdata : inst;
 
     assign output_ex_valid = except_adef & validout;
     assign output_ecode = `ECODE_ADEF;

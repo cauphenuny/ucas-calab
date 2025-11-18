@@ -4,10 +4,10 @@ module mycpu_top(
     input  wire        clk,
     input  wire        resetn,
     // inst sram interface
-    output reg         inst_sram_req,
+    output wire        inst_sram_req,
     output wire        inst_sram_wr,
     output wire [1:0]  inst_sram_size,
-    output reg  [31:0] inst_sram_addr,
+    output wire [31:0] inst_sram_addr,
     output wire [ 3:0] inst_sram_wstrb,
     output wire [31:0] inst_sram_wdata,
     input  wire        inst_sram_addr_ok,
@@ -34,12 +34,14 @@ module mycpu_top(
     always @(posedge clk) rst <= ~resetn;
 
 /**************** IF stage ****************/
-    wire [31:0] nextpc, seq_pc, br_target;
+    wire [31:0] seq_pc, br_target;
     reg  [31:0] pc;
-    wire        br_taken, id_refreshing;
-    wire        flush = (wb_ex | ertn_flush);
+    wire        br_taken;
+    wire        flush = (wb_ex | ertn_flush | br_taken);
+    wire        if_allowin;
     wire        if_allowout;
     wire        if_refreshing;
+    wire        if_validin;
     wire        if_validout;
     wire        if_ex_valid;
     wire [ 5:0] if_ecode;
@@ -54,7 +56,6 @@ module mycpu_top(
     wire [31:0] if_inst;
 
     assign seq_pc        = pc + 32'h4;
-    wire if_allowin;
 
     localparam ENTRYPOINT = 32'h1c000000;
 
@@ -72,11 +73,13 @@ module mycpu_top(
         end
     end
 
+    assign if_validin = ~flush;
+
     stage_if u_stage_if(
         .clk(clk),
         .rst(rst),
         .allowin(if_allowin),
-        .validin(~br_taken & ~flush),
+        .validin(if_validin),
         .validout(if_validout),
         .allowout(if_allowout),
         .cancel(flush),
@@ -106,7 +109,7 @@ module mycpu_top(
         .inst_sram_data_ok(inst_sram_data_ok)
     );
 
-    assign if_refreshing = u_stage_if.pipe.refreshing;
+    assign if_refreshing = if_allowin && if_validin;
 
 /**************** other units ****************/
 
