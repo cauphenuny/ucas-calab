@@ -26,13 +26,13 @@ module stage_if(
     output wire        output_ex_valid,
 
     // I/O
-    output wire inst_sram_req,
-    output wire inst_sram_wr,
-    output wire [1:0] inst_sram_size,
-    output wire [31:0] inst_sram_addr,
-    output wire [3:0] inst_sram_wstrb,
-    output wire [31:0] inst_sram_wdata,
-    input  wire        inst_sram_addr_ok,
+    // output wire inst_sram_req,
+    // output wire inst_sram_wr,
+    // output wire [1:0] inst_sram_size,
+    // output wire [31:0] inst_sram_addr,
+    // output wire [3:0] inst_sram_wstrb,
+    // output wire [31:0] inst_sram_wdata,
+    // input  wire        inst_sram_addr_ok,
     input  wire        inst_sram_data_ok,
     input  wire [31:0] inst_sram_rdata
 );
@@ -66,6 +66,8 @@ module stage_if(
         end
     end
 
+    assign validout = raw_validout & ~cancelled & ~cancel;
+
     reg [31:0] pc, inst;
     wire except_adef = (pc[1:0] != 2'b0);
 
@@ -85,72 +87,29 @@ module stage_if(
         end
     end
 
-    localparam IDLE = 2'd0,
-                REQ  = 2'd1,
-                WAIT = 2'd2,
-                RESP = 2'd3;
-    
-    reg [1:0] state, next_state;
-
-    assign validout = raw_validout & ~cancelled & ~cancel & (state == RESP);
+    reg already_ok;
 
     always @(posedge clk) begin
         if (rst) begin
-            state <= IDLE;
-        end else begin
-            state <= next_state;
+            already_ok <= 1'b0;
+        end else if (inst_sram_data_ok) begin
+            already_ok <= 1'b1;
+        end else if (refreshing) begin
+            already_ok <= 1'b0;
         end
     end
 
-    always @(*) begin
-        case (state)
-            IDLE: begin
-                if (refreshing | valid) begin
-                    next_state = REQ;
-                end else begin
-                    next_state = IDLE;
-                end
-            end
-            REQ: begin
-                if (except_adef) begin
-                    next_state = RESP;
-                end else if (inst_sram_req & inst_sram_addr_ok) begin
-                    next_state = WAIT;
-                end else begin
-                    next_state = REQ;
-                end
-            end
-            WAIT: begin
-                if (inst_sram_data_ok) begin
-                    next_state = RESP;
-                end else begin
-                    next_state = WAIT;
-                end
-            end
-            RESP: begin
-                if (allowout) begin
-                    next_state = IDLE;
-                end else begin
-                    next_state = RESP;
-                end
-            end
-            default: begin
-                next_state = IDLE;
-            end
-        endcase
-    end
+    assign readygo = already_ok | inst_sram_data_ok;
 
-    assign readygo = state == RESP;
-
-    assign inst_sram_addr = pc;
-    assign inst_sram_req = ~except_adef & (state == REQ) & valid;
-    assign inst_sram_wr = 1'b0;
-    assign inst_sram_wstrb = 4'b0;
-    assign inst_sram_size = 2'b10; // word
-    assign inst_sram_wdata = 32'h0;
+    // assign inst_sram_addr = pc;
+    // assign inst_sram_req = ~except_adef & (state == REQ) & valid;
+    // assign inst_sram_wr = 1'b0;
+    // assign inst_sram_wstrb = 4'b0;
+    // assign inst_sram_size = 2'b10; // word
+    // assign inst_sram_wdata = 32'h0;
 
     assign output_pc = pc;
-    assign output_inst = (state == WAIT && inst_sram_addr_ok) ? inst_sram_rdata : inst;
+    assign output_inst = inst_sram_data_ok ? inst_sram_rdata : inst;
 
     assign output_ex_valid = except_adef & validout;
     assign output_ecode = `ECODE_ADEF;

@@ -34,7 +34,7 @@ module mycpu_top(
     always @(posedge clk) rst <= ~resetn;
 
 /**************** IF stage ****************/
-    wire [31:0] seq_pc, br_target;
+    wire [31:0] seq_pc, br_target, nextpc;
     reg  [31:0] pc;
     wire        br_taken;
     wire        flush = (wb_ex | ertn_flush | br_taken);
@@ -55,25 +55,42 @@ module mycpu_top(
     wire [31:0] if_pc;
     wire [31:0] if_inst;
 
-    assign seq_pc        = pc + 32'h4;
+    assign seq_pc = pc + 32'h4;
+    assign nextpc = ertn_flush ? ex_ra :
+                    wb_ex ? ex_entry :
+                    br_taken ? br_target :
+                    if_refreshing ? seq_pc :
+                    pc;
 
-    localparam ENTRYPOINT = 32'h1c000000;
+    localparam ENTRYPOINT = 32'h1bfffffc;
 
     always @(posedge clk) begin
         if (rst) begin
             pc <= ENTRYPOINT;
-        end else if (ertn_flush) begin
-            pc <= ex_ra;
-        end else if (wb_ex) begin
-            pc <= ex_entry;
-        end else if (br_taken) begin
-            pc <= br_target;
-        end else if (if_refreshing) begin
-            pc <= seq_pc;
+        end else begin
+            pc <= nextpc;
         end
     end
 
-    assign if_validin = ~flush;
+    reg addr_sent;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            addr_sent <= 1'b0;
+        end else if (if_refreshing) begin
+            addr_sent <= 1'b0;
+        end else if (inst_sram_addr_ok && inst_sram_req) begin
+            addr_sent <= 1'b1;
+        end
+    end
+
+    assign if_validin = addr_sent;
+    assign inst_sram_req = ~addr_sent;
+    assign inst_sram_addr = nextpc;
+    assign inst_sram_wr = 1'b0;
+    assign inst_sram_size = 2'b10; // word
+    assign inst_sram_wstrb = 4'b0;
+    assign inst_sram_wdata = 32'h0;
 
     stage_if u_stage_if(
         .clk(clk),
@@ -84,7 +101,7 @@ module mycpu_top(
         .allowout(if_allowout),
         .cancel(flush),
 
-        .input_pc(pc),
+        .input_pc(nextpc),
         .output_pc(if_pc),
         .output_inst(if_inst),
 
@@ -98,14 +115,14 @@ module mycpu_top(
         .output_csr_wvalue(if_csr_wvalue),
         .output_ex_valid(if_ex_valid),
 
-        .inst_sram_req(inst_sram_req),
-        .inst_sram_wr(inst_sram_wr),
-        .inst_sram_size(inst_sram_size),
-        .inst_sram_addr(inst_sram_addr),
-        .inst_sram_wstrb(inst_sram_wstrb),
-        .inst_sram_wdata(inst_sram_wdata),
+        // .inst_sram_req(inst_sram_req),
+        // .inst_sram_wr(inst_sram_wr),
+        // .inst_sram_size(inst_sram_size),
+        // .inst_sram_addr(inst_sram_addr),
+        // .inst_sram_wstrb(inst_sram_wstrb),
+        // .inst_sram_wdata(inst_sram_wdata),
         .inst_sram_rdata(inst_sram_rdata),
-        .inst_sram_addr_ok(inst_sram_addr_ok),
+        // .inst_sram_addr_ok(inst_sram_addr_ok),
         .inst_sram_data_ok(inst_sram_data_ok)
     );
 
