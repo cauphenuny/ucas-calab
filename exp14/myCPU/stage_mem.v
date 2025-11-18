@@ -196,7 +196,7 @@ module stage_mem(
     assign output_csr_we    = csr_we_r;
     assign output_csr_wmask = csr_wmask_r;
     assign output_csr_wvalue= csr_wvalue_r;
-    assign output_is_ertn   = is_ertn_r;
+    assign output_is_ertn   = is_ertn_r & valid;
     assign output_is_csr    = is_csr_r;
     assign output_csr_rvalue= csr_rvalue_r;
 
