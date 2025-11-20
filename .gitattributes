@@ -1,0 +1,4 @@
+*.S linguist-vendored
+*.s linguist-vendored
+*.asm linguist-vendored
+*.c linguist-vendored
