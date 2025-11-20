@@ -1,4 +1,6 @@
-*.S linguist-vendored
-*.s linguist-vendored
-*.asm linguist-vendored
-*.c linguist-vendored
+**/*verify/ linguist-vendored
+**/func/ linguist-vendored
+**/gettrace/ linguist-vendored
+**/rtl/ linguist-vendored
+**/run_vivado/ linguist-vendored
+**/testbench/ linguist-vendored
