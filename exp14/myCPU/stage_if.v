@@ -1,5 +1,7 @@
 `timescale 10ns / 1ps
 
+`include "macro.v"
+
 module stage_if(
     input wire clk, rst,
     

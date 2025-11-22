@@ -1,5 +1,7 @@
 `timescale 10ns / 1ps
 
+`include "macro.v"
+
 module stage_id(
     input  wire clk, rst,
     // pipeline control
