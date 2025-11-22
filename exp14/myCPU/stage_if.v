@@ -83,10 +83,40 @@ module stage_if(
         end
     end
 
+    // 当前指令没有传到 ID 级的时候 sram 又返回了数据，就把数据存到 buffer 里
+    reg buffer_valid;
+    reg [31:0] inst_buffer;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            buffer_valid <= 1'b0;
+            inst_buffer <= 32'h0;
+        end else if (inst_sram_data_ok && (refreshing && buffer_valid)) begin // #1
+            buffer_valid <= 1'b1;
+            inst_buffer <= inst_sram_rdata;
+        end else if (inst_sram_data_ok && (already_ok && ~refreshing)) begin // #2
+            buffer_valid <= 1'b1;
+            inst_buffer <= inst_sram_rdata;
+        end
+    end
+
+    // 注意 inst_sram_data_ok == 1 时，可能有三个地方保存 inst_sram_rdata，
+    // 而这三个地方的保存条件是互斥且完备的
+    // A = refreshing && buffer_valid
+    // B = ~refreshing && already_ok
+    //
+    // 更新点：
+    // #1. A
+    // #2. ~A && B
+    // #3. ~A && ~B
+
     always @(posedge clk) begin
         if (rst) begin
             inst <= 32'h0;
-        end else if (inst_sram_data_ok) begin
+        end else if (refreshing && buffer_valid) begin
+            inst <= inst_buffer;
+            buffer_valid <= 1'b0;
+        end else if (inst_sram_data_ok && (~already_ok || refreshing)) begin // #3
             inst <= inst_sram_rdata;
         end
     end
@@ -96,7 +126,9 @@ module stage_if(
     always @(posedge clk) begin
         if (rst) begin
             already_ok <= 1'b0;
-        end else if (inst_sram_data_ok) begin
+        end else if (refreshing && buffer_valid) begin
+            already_ok <= 1'b1;
+        end else if (inst_sram_data_ok && (~already_ok || refreshing)) begin
             already_ok <= 1'b1;
         end else if (refreshing) begin
             already_ok <= 1'b0;
@@ -127,3 +159,4 @@ module stage_if(
     assign output_csr_wvalue = pc;
 
 endmodule
+
