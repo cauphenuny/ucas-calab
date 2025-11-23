@@ -4,3 +4,4 @@
 **/rtl/ linguist-vendored
 **/run_vivado/ linguist-vendored
 **/testbench/ linguist-vendored
+*.S linguist-vendored
