@@ -34,15 +34,20 @@ module mycpu_top(
     always @(posedge clk) rst <= ~resetn;
 
 /**************** IF stage ****************/
-    wire [31:0] seq_pc, br_target, nextpc;
-    reg  [31:0] pc;
+    wire [31:0] seq_pc, br_target, flush_pc;
+    reg  [31:0] pc, next_pc;
     wire        br_taken;
     wire        flush = (wb_ex | ertn_flush | br_taken);
+    reg         flushed;
+
+    // pre-IF to IF
     wire        if_allowin;
     wire        if_allowout;
     wire        if_refreshing;
     wire        if_validin;
     wire        if_validout;
+
+    // IF to ID
     wire        if_ex_valid;
     wire [ 5:0] if_ecode;
     wire [ 8:0] if_esubcode;
@@ -58,19 +63,44 @@ module mycpu_top(
     wire addr_sending;
 
     assign seq_pc = pc + 32'h4;
-    assign nextpc = ertn_flush ? ex_ra :
-                    wb_ex ? ex_entry :
-                    br_taken ? br_target :
-                    if_refreshing ? seq_pc :
-                    pc;
+    assign flush_pc = ertn_flush ? ex_ra :
+                      wb_ex ? ex_entry :
+                      br_target;
 
     localparam ENTRYPOINT = 32'h1c000000;
 
     always @(posedge clk) begin
+        if (rst)
+            next_pc <= ENTRYPOINT + 4;
+        else if (flush) begin
+            if (if_refreshing)
+                next_pc <= flush_pc + 4;
+            else
+                next_pc <= flush_pc;
+        end
+        else if (if_refreshing)
+            next_pc <= next_pc + 4;
+    end
+
+    always @(posedge clk) begin
         if (rst) begin
             pc <= ENTRYPOINT;
-        end else begin
-            pc <= nextpc;
+        end else if (if_refreshing) begin
+            if (flush) begin
+                pc <= flush_pc;
+            end else begin
+                pc <= next_pc;
+            end
+        end
+    end
+
+    always @(posedge clk) begin
+        if (rst) begin
+            flushed <= 1'b0;
+        end else if (if_refreshing) begin
+            flushed <= 1'b0;
+        end else if (flush) begin
+            flushed <= 1'b1;
         end
     end
 
@@ -88,7 +118,7 @@ module mycpu_top(
     end
 
     assign if_validin = addr_sent;
-    assign inst_sram_req = ~addr_sent & ~br_taken;
+    assign inst_sram_req = ~addr_sent;
     assign inst_sram_addr = pc;
     assign inst_sram_wr = 1'b0;
     assign inst_sram_size = 2'b10; // word
@@ -102,7 +132,7 @@ module mycpu_top(
         .validin(if_validin),
         .validout(if_validout),
         .allowout(if_allowout),
-        .cancelin(flush),
+        .cancelin(flush | flushed),
         .cancelout(flush),
 
         .input_pc(pc),
@@ -286,7 +316,7 @@ module mycpu_top(
     stage_id u_stage_id(
         .clk(clk),
         .rst(rst),
-        .validin(~br_taken & if_validout & ~(wb_ex | ertn_flush)),
+        .validin(if_validout),
         .allowin(if_allowout),
         .validout(),
         .allowout(),
