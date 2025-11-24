@@ -283,8 +283,8 @@ module stage_ex(
     assign data_sram_req = (valid && ~older_ex && ~ex_valid && ~older_ertn) 
                             && is_mem_op && data_req_en;
 
-    assign data_sram_wr  = (validout && ~older_ex && ~ex_valid && ~older_ertn) 
-                            && is_store;
+    assign data_sram_wr  = (valid && ~older_ex && ~ex_valid && ~older_ertn)
+                           && is_store;
 
     assign data_sram_size = op_st_w | op_ld_w ? 2'b10
                             : op_st_h | op_ld_h | op_ld_hu ? 2'b01
