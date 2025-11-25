@@ -87,16 +87,23 @@ module stage_if(
     reg buffer_valid;
     reg [31:0] inst_buffer;
 
+    wire buffer_pop = refreshing && buffer_valid;
+    wire buffer_push_case1 = inst_sram_data_ok && (refreshing && buffer_valid); // #1
+    wire buffer_push_case2 = inst_sram_data_ok && (already_ok && ~refreshing); // #2
+    wire buffer_push = buffer_push_case1 | buffer_push_case2;
+
     always @(posedge clk) begin
         if (rst) begin
             buffer_valid <= 1'b0;
             inst_buffer <= 32'h0;
-        end else if (inst_sram_data_ok && (refreshing && buffer_valid)) begin // #1
-            buffer_valid <= 1'b1;
-            inst_buffer <= inst_sram_rdata;
-        end else if (inst_sram_data_ok && (already_ok && ~refreshing)) begin // #2
-            buffer_valid <= 1'b1;
-            inst_buffer <= inst_sram_rdata;
+        end else begin
+            if (buffer_pop && ~buffer_push)
+                buffer_valid <= 1'b0;
+            else if (buffer_push)
+                buffer_valid <= 1'b1;
+
+            if (buffer_push)
+                inst_buffer <= inst_sram_rdata;
         end
     end
 
@@ -115,7 +122,6 @@ module stage_if(
             inst <= 32'h0;
         end else if (refreshing && buffer_valid) begin
             inst <= inst_buffer;
-            buffer_valid <= 1'b0;
         end else if (inst_sram_data_ok && (~already_ok || refreshing)) begin // #3
             inst <= inst_sram_rdata;
         end
