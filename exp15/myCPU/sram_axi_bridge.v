@@ -69,14 +69,14 @@ module sram_axi_bridge (
 
     reg [ 2:0] state, next_state;
 
-    localparam [2:0] STATE_IDLE = 3'd0;
-    localparam [2:0] STATE_I_AR = 3'd1;
-    localparam [2:0] STATE_I_R = 3'd2;
-    localparam [2:0] STATE_D_AR = 3'd3;
-    localparam [2:0] STATE_D_R = 3'd4;
-    localparam [2:0] STATE_D_AW = 3'd5;
-    localparam [2:0] STATE_D_W = 3'd6;
-    localparam [2:0] STATE_D_B = 3'd7;
+    localparam [2:0] STATE_IDLE = 3'd0; // 空闲
+    localparam [2:0] STATE_I_AR = 3'd1; // 发指令读地址
+    localparam [2:0] STATE_I_R  = 3'd2; // 等指令读数据
+    localparam [2:0] STATE_D_AR = 3'd3; // 发数据读地址
+    localparam [2:0] STATE_D_R  = 3'd4; // 等数据读返回
+    localparam [2:0] STATE_D_AW = 3'd5; // 写：地址+数据并发阶段（可能只完成一方）
+    localparam [2:0] STATE_D_W  = 3'd6; // 写：剩余数据或地址单独握手阶段
+    localparam [2:0] STATE_D_B  = 3'd7; // 写：等待响应
 
     reg        pend_is_inst;
     reg        pend_is_write;
@@ -139,7 +139,7 @@ module sram_axi_bridge (
                 if (!aw_done && awvalid && awready) aw_done <= 1'b1;
                 if (!w_done && wvalid && wready) w_done <= 1'b1;
             end
-            if (!writing && aw_done && w_done) writing <= 1'b1;
+            if (state == STATE_D_AW || state == STATE_D_W) writing <= 1'b1;
             if (state == STATE_D_B && bvalid) begin
                 writing <= 1'b0;
                 aw_done <= 1'b0;
@@ -151,7 +151,7 @@ module sram_axi_bridge (
                     pend_is_write <= data_wr;
                     pend_size <= data_size;
                     pend_addr <= data_addr;
-                    pend_wdata    <= data_wdata;
+                    pend_wdata <= data_wdata;
                     pend_wstrb <= data_wstrb;
                     aw_done <= 0;
                     w_done <= 0;
@@ -160,7 +160,7 @@ module sram_axi_bridge (
                     pend_is_write <= 0;
                     pend_size <= inst_size;
                     pend_addr <= inst_addr;
-                    pend_wdata    <= 0;
+                    pend_wdata <= 0;
                     pend_wstrb <= 0;
                 end
             end
@@ -168,7 +168,10 @@ module sram_axi_bridge (
     end
 
     always @(*) begin
-        arid = 0; awid = 0; wid = 0;
+        // 默认 ID 与控制：根据读类型区分 arid；写统一使用 awid=wid=1
+        arid = 0; // 若为数据读稍后覆盖为1
+        awid = 4'd1;
+        wid  = 4'd1;
         arlen = 0; awlen = 0;
         arburst = 2'b01; awburst = 2'b01;
         arlock = 0; awlock = 0;
@@ -181,10 +184,17 @@ module sram_axi_bridge (
         arsize = 3'b010; awsize = 3'b010;
         wdata = 0; wstrb = 0;
         case (state)
-            STATE_I_AR, STATE_D_AR: begin
+            STATE_I_AR: begin
                 arvalid = 1'b1;
                 araddr  = pend_addr;
                 arsize  = {1'b0, pend_size};
+                arid    = 4'd0; // 指令读 ID=0
+            end
+            STATE_D_AR: begin
+                arvalid = 1'b1;
+                araddr  = pend_addr;
+                arsize  = {1'b0, pend_size};
+                arid    = 4'd1; // 数据读 ID=1
             end
             STATE_I_R, STATE_D_R: begin
                 rready = 1'b1;
@@ -196,9 +206,10 @@ module sram_axi_bridge (
                 wstrb   = pend_wstrb;
                 awvalid = !aw_done;
                 wvalid  = !w_done;
+                bready  = 1'b1; // 及早准备接收写响应，减少等待
             end
             STATE_D_B: begin
-                bready = 1'b1;
+                bready = 1'b1; // 保持直到 bvalid=1
             end
             default: ;
         endcase
@@ -229,6 +240,7 @@ module sram_axi_bridge (
                 data_data_ok <= 1;
                 data_rdata   <= rdata;
             end
+            // 写响应到达
             if (state == STATE_D_B && bvalid) data_data_ok <= 1;
         end
     end

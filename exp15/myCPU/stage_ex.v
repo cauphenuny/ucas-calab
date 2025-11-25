@@ -291,7 +291,7 @@ module stage_ex(
                             : op_st_b | op_ld_b | op_ld_bu ? 2'b00
                             : 2'b00;
                             
-    assign data_sram_wstrb   = (validout && ~older_ex && ~ex_valid && ~older_ertn) ? (
+    assign data_sram_wstrb   = (valid && ~older_ex && ~ex_valid && ~older_ertn) ? (
                                 op_st_w ? 4'b1111
                                 : op_st_h ? (alu_result[1] ? 4'b1100 : 4'b0011)
                                 : op_st_b ? (alu_result[1:0] == 2'b00 ? 4'b0001
