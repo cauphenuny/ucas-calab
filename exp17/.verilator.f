@@ -1,0 +1,15 @@
+./myCPU/alu.v
+./myCPU/csr.v
+./myCPU/macro.v
+./myCPU/mycpu_top.v
+./myCPU/regfile.v
+./myCPU/sram_axi_bridge.v
+./myCPU/stage_ex.v
+./myCPU/stage_id.v
+./myCPU/stage_if.v
+./myCPU/stage_mem.v
+./myCPU/stage_wb.v
+./myCPU/tlb.v
+./myCPU/tools.v
+./rtl/tlb_top.v
+./testbench/testbench.v
