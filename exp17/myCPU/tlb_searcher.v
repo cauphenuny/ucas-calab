@@ -1,7 +1,7 @@
 module tlb_searcher #(
     parameter integer TLBNUM = 16
 )(
-    input wire [TLBNUM-1:0] tlb_e,
+    input wire              tlb_e      [TLBNUM-1:0],
     input wire              tlb_ps4MB  [TLBNUM-1:0],
     input wire [      18:0] tlb_vppn   [TLBNUM-1:0],
     input wire [       9:0] tlb_asid   [TLBNUM-1:0],
@@ -17,9 +17,12 @@ module tlb_searcher #(
     input wire              tlb_d1     [TLBNUM-1:0],
     input wire              tlb_v1     [TLBNUM-1:0],
 
-    input wire match[TLBNUM-1:0],
-    input wire match0[TLBNUM-1:0],
-    input wire match1[TLBNUM-1:0],
+    input wire [18:0] vppn,
+    input wire        va_bit12,
+    input wire [ 9:0] asid,
+    // output wire match[TLBNUM-1:0],
+    // output wire match0[TLBNUM-1:0],
+    // output wire match1[TLBNUM-1:0],
 
     output wire       found,
     output wire [$clog2(TLBNUM)-1:0] index,
@@ -31,10 +34,24 @@ module tlb_searcher #(
     output wire       v
 );
 
+wire [TLBNUM-1:0] match, match0, match1;
+
+genvar i;
+generate
+    for (i = 0; i < TLBNUM; i = i + 1) begin
+        assign match[i] = (vppn[18:9] == tlb_vppn[i][18:9])
+                        && (tlb_ps4MB[i] || vppn[8:0] == tlb_vppn[i][8:0])
+                        && (tlb_g[i] || asid == tlb_asid[i])
+                        && tlb_e[i];
+        assign match0[i] = match[i] && (!vppn[8] || !va_bit12);
+        assign match1[i] = match[i] && (vppn[8] || va_bit12);
+    end
+endgenerate
+
 wire [$clog2(TLBNUM)-1:0] index_array[TLBNUM-1:0];
 
 generate
-    for (i = 0; i < TLBNUM; i++) begin
+    for (i = 0; i < TLBNUM; i = i + 1) begin
         assign index_array[i] = i;
     end
 endgenerate
@@ -153,7 +170,7 @@ selector #(
 ) ps_selector (
     .sel(match),
     .in(tlb_ps4MB),
-    .out(ps)
+    .out(ps4MB)
 );
 
 assign found = |match;
