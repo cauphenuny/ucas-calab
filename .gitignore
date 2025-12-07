@@ -18,3 +18,6 @@
 **/*.xdv
 report-template/*.pdf
 **/*.zip
+**/rtl/
+exp17/run_vivado/*
+!exp17/run_vivado/*.tcl

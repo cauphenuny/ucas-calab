@@ -9,8 +9,22 @@ add_files -quiet [glob -nocomplain ../rtl/xilinx_ip/*.xci]
 # Add simulation files
 add_files -fileset sim_1 ../testbench
 
-# Add tlb.v
-add_files -quiet -scan_for_includes ../../../myCPU/tlb.v
+# Add SystemVerilog design sources explicitly so Vivado parses them as SV
+set sv_design_sources [list \
+	../myCPU/tlb.sv \
+	../myCPU/tools.sv \
+	../myCPU/tlb_searcher.sv
+]
+
+foreach sv_file $sv_design_sources {
+	if {[file exists $sv_file]} {
+		set sv_norm [file normalize $sv_file]
+		add_files -quiet -scan_for_includes $sv_norm
+		set_property file_type {SystemVerilog} [get_files $sv_norm]
+	} else {
+		puts "[format {WARNING: SystemVerilog source '%s' was not found.} $sv_file]"
+	}
+}
 
 # Add constraints
 add_files -fileset constrs_1 -quiet ./constraints
