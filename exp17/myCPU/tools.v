@@ -123,3 +123,34 @@ module comparator(
     assign a_lt_b_unsigned = (a < b);
 
 endmodule
+
+// NOTE: one-hot selector
+module selector #(
+    parameter integer DATA_WIDTH,
+    parameter integer SEL_NUM
+)(
+    input wire [SEL_NUM-1:0] select,
+    input wire [DATA_WIDTH-1:0] in [SEL_NUM-1:0],
+    output wire [DATA_WIDTH-1:0] out
+);
+
+wire [SEL_NUM-1:0] data_raw[DATA_WIDTH-1:0];
+
+// transpose
+genvar i, j;
+generate
+    for (i = 0; i < SEL_NUM; i++) begin
+        for (j = 0; j < DATA_WIDTH; j++) begin
+            assign data_raw[j][i] = select[i] & data_in[i][j];
+        end
+    end
+endgenerate
+
+// reduce
+generate
+    for (i = 0; i < DATA_WIDTH; i++) begin
+        assign data[i] = |data_raw[i];
+    end
+endgenerate
+
+endmodule
