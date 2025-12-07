@@ -44,8 +44,10 @@ generate
                         && (tlb_ps4MB[i] || vppn[8:0] == tlb_vppn[i][8:0])
                         && (tlb_g[i] || asid == tlb_asid[i])
                         && tlb_e[i];
-        assign match0[i] = match[i] && (!vppn[8] || !va_bit12);
-        assign match1[i] = match[i] && (vppn[8] || va_bit12);
+        wire even = tlb_ps4MB[i] ? ~vppn[8] : ~va_bit12;
+        wire  odd = tlb_ps4MB[i] ?  vppn[8] :  va_bit12;
+        assign match0[i] = match[i] && even;
+        assign match1[i] = match[i] &&  odd;
     end
 endgenerate
 
