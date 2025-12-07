@@ -9,7 +9,14 @@
 ./myCPU/stage_if.v
 ./myCPU/stage_mem.v
 ./myCPU/stage_wb.v
-./myCPU/tlb.v
+./myCPU/tlb_searcher.sv
+./myCPU/tlb.sv
+./myCPU/tools.sv
 ./myCPU/tools.v
 ./rtl/tlb_top.v
+./rtl/xilinx_ip/clk_pll_clk_wiz.v
+./rtl/xilinx_ip/clk_pll_sim_netlist.v
+./rtl/xilinx_ip/clk_pll_stub.v
+./rtl/xilinx_ip/clk_pll.v
+./run_vivado/project/loongson.sim/sim_1/behav/xsim/glbl.v
 ./testbench/testbench.v

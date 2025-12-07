@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 module tlb_searcher #(
     parameter integer TLBNUM = 16
 )(
