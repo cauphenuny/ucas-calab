@@ -62,6 +62,14 @@ module stage_id(
     // ERTN flag
     output wire        output_is_ertn,
 
+    // TLB instructions
+    output wire        output_inst_tlbsrch,
+    output wire        output_inst_tlbrd,
+    output wire        output_inst_tlbwr,
+    output wire        output_inst_tlbfill,
+    output wire        output_inst_invtlb,
+    output wire [ 4:0] output_invtlb_op,
+
     // I/O
     input  wire [31:0] rf_rdata1, rf_rdata2,
     output wire [ 4:0] rf_raddr1, rf_raddr2
@@ -221,6 +229,11 @@ module stage_id(
     wire        inst_rdcntvl_w;
     wire        inst_rdcntvh_w;
     wire        inst_rdcntid;
+    wire        inst_tlbsrch;
+    wire        inst_tlbrd;
+    wire        inst_tlbwr;
+    wire        inst_tlbfill;
+    wire        inst_invtlb;
 
     wire        exception_ine;
     wire        exception_intr;
@@ -329,6 +342,15 @@ module stage_id(
     assign inst_rdcntvh_w = inst_rdtimeh_w & (rj == 5'h0);
     assign inst_rdcntid   = inst_rdtimel_w & (rd == 5'h0);
 
+    // TLB instructions
+    assign inst_tlbsrch = ~ex_valid_r & (inst == 32'h06482800);
+    assign inst_tlbrd   = ~ex_valid_r & (inst == 32'h06482c00);
+    assign inst_tlbwr   = ~ex_valid_r & (inst == 32'h06483000);
+    assign inst_tlbfill = ~ex_valid_r & (inst == 32'h06483400);
+    assign inst_invtlb  = ~ex_valid_r & op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h13];
+    
+    wire [4:0] invtlb_op = inst[4:0];  // INVTLB operation code
+
     assign exception_ine = ~ex_valid_r      &
                            ~inst_add_w      & ~inst_sub_w       & ~inst_slt     & ~inst_sltu &
                            ~inst_nor        & ~inst_and         & ~inst_or      & ~inst_xor &
@@ -343,7 +365,9 @@ module stage_id(
                            ~inst_mulh_wu    & ~inst_pcaddu12i   & ~inst_div_w   & ~inst_div_wu &
                            ~inst_mod_w      & ~inst_mod_wu      & ~inst_syscall & ~inst_ertn &
                            ~inst_csrrd      & ~inst_csrwr       & ~inst_csrxchg & ~inst_rdcntvl_w &
-                           ~inst_rdcntvh_w  & ~inst_rdcntid     & ~inst_break   ;
+                           ~inst_rdcntvh_w  & ~inst_rdcntid     & ~inst_break   &
+                           ~inst_tlbsrch    & ~inst_tlbrd       & ~inst_tlbwr   & ~inst_tlbfill &
+                           ~inst_invtlb     ;
 
     assign exception_intr = valid & (intr_stat != 13'h0);
 
@@ -531,6 +555,14 @@ module stage_id(
     assign output_csr_rvalue= csr_rvalue;
     assign output_is_csr    = is_csr | is_csr_r;
     assign output_is_ertn   = inst_ertn & valid;
+    
+    // TLB instructions
+    assign output_inst_tlbsrch = inst_tlbsrch & valid;
+    assign output_inst_tlbrd   = inst_tlbrd   & valid;
+    assign output_inst_tlbwr   = inst_tlbwr   & valid;
+    assign output_inst_tlbfill = inst_tlbfill & valid;
+    assign output_inst_invtlb  = inst_invtlb  & valid;
+    assign output_invtlb_op    = invtlb_op;
     
     // br_stall: 转移指令计算未完成，需要阻塞取指
     // 需要寄存器值的转移指令：beq, bne, blt, bge, bltu, bgeu, jirl

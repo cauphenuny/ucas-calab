@@ -15,6 +15,10 @@ module stage_if(
     output wire [31:0] output_pc,
     output wire [31:0] output_inst,
 
+    // TLB exception input
+    input wire        input_tlb_ex,
+    input wire [5:0]  input_tlb_ecode,
+
     // exception info
     output wire [5:0]  output_ecode,
     output wire [8:0]  output_esubcode,
@@ -74,12 +78,19 @@ module stage_if(
 
     reg [31:0] pc, inst;
     wire except_adef = (pc[1:0] != 2'b0);
+    
+    reg tlb_ex_r;
+    reg [5:0] tlb_ecode_r;
 
     always @(posedge clk) begin
         if (rst) begin
             pc <= 32'h0;
+            tlb_ex_r <= 1'b0;
+            tlb_ecode_r <= 6'h0;
         end else if (refreshing) begin
             pc <= input_pc;
+            tlb_ex_r <= input_tlb_ex;
+            tlb_ecode_r <= input_tlb_ecode;
         end
     end
 
@@ -153,14 +164,15 @@ module stage_if(
     assign output_pc = pc;
     assign output_inst = inst;
 
-    assign output_ex_valid = except_adef & validout;
-    assign output_ecode = `ECODE_ADEF;
-    assign output_esubcode = `ESUBCODE_ADEF;
+    wire has_exception = except_adef | tlb_ex_r;
+    assign output_ex_valid = has_exception & validout;
+    assign output_ecode = except_adef ? `ECODE_ADEF : tlb_ecode_r;
+    assign output_esubcode = except_adef ? `ESUBCODE_ADEF : 9'h0;
 
-    assign output_is_csr = except_adef;
-    assign output_csr_en = except_adef;
+    assign output_is_csr = has_exception;
+    assign output_csr_en = has_exception;
     assign output_csr_num = `CSR_BADV;
-    assign output_csr_we = except_adef;
+    assign output_csr_we = has_exception;
     assign output_csr_wmask = 32'hffff_ffff;
     assign output_csr_wvalue = pc;
 

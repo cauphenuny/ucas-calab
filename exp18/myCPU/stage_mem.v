@@ -55,6 +55,26 @@ module stage_mem(
     input  wire        input_is_ertn,
     output wire        output_is_ertn,
 
+    // TLB instructions
+    input  wire        input_inst_tlbsrch,
+    input  wire        input_inst_tlbrd,
+    input  wire        input_inst_tlbwr,
+    input  wire        input_inst_tlbfill,
+    input  wire        input_inst_invtlb,
+    input  wire [ 4:0] input_invtlb_op,
+    output wire        output_inst_tlbsrch,
+    output wire        output_inst_tlbrd,
+    output wire        output_inst_tlbwr,
+    output wire        output_inst_tlbfill,
+    output wire        output_inst_invtlb,
+    output wire [ 4:0] output_invtlb_op,
+    
+    // TLBSRCH result
+    input  wire        input_tlbsrch_found,
+    input  wire [ 3:0] input_tlbsrch_index,
+    output wire        output_tlbsrch_found,
+    output wire [ 3:0] output_tlbsrch_index,
+
     // CSR flag/value
     input  wire        input_is_csr,
     input  wire [31:0] input_csr_rvalue,
@@ -173,6 +193,18 @@ module stage_mem(
     reg        is_ertn_r;
     reg        is_csr_r;
     reg [31:0] csr_rvalue_r;
+    
+    // TLB instruction registers
+    reg        inst_tlbsrch_r;
+    reg        inst_tlbrd_r;
+    reg        inst_tlbwr_r;
+    reg        inst_tlbfill_r;
+    reg        inst_invtlb_r;
+    reg [ 4:0] invtlb_op_r;
+    
+    // TLBSRCH result registers
+    reg        tlbsrch_found_r;
+    reg [ 3:0] tlbsrch_index_r;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -182,6 +214,14 @@ module stage_mem(
             csr_wmask_r <= 32'h0;
             csr_wvalue_r<= 32'h0;
             is_ertn_r   <= 1'b0;
+            inst_tlbsrch_r <= 1'b0;
+            inst_tlbrd_r   <= 1'b0;
+            inst_tlbwr_r   <= 1'b0;
+            inst_tlbfill_r <= 1'b0;
+            inst_invtlb_r  <= 1'b0;
+            invtlb_op_r    <= 5'b0;
+            tlbsrch_found_r <= 1'b0;
+            tlbsrch_index_r <= 4'b0;
         end else if (pipe.refreshing) begin
             csr_en_r    <= input_csr_en;
             csr_num_r   <= input_csr_num;
@@ -191,6 +231,14 @@ module stage_mem(
             is_ertn_r   <= input_is_ertn;
             is_csr_r    <= input_is_csr;
             csr_rvalue_r<= input_csr_rvalue;
+            inst_tlbsrch_r <= input_inst_tlbsrch;
+            inst_tlbrd_r   <= input_inst_tlbrd;
+            inst_tlbwr_r   <= input_inst_tlbwr;
+            inst_tlbfill_r <= input_inst_tlbfill;
+            inst_invtlb_r  <= input_inst_invtlb;
+            invtlb_op_r    <= input_invtlb_op;
+            tlbsrch_found_r <= input_tlbsrch_found;
+            tlbsrch_index_r <= input_tlbsrch_index;
         end
     end
 
@@ -202,6 +250,18 @@ module stage_mem(
     assign output_is_ertn   = is_ertn_r & valid;
     assign output_is_csr    = is_csr_r;
     assign output_csr_rvalue= csr_rvalue_r;
+    
+    // TLB instruction outputs
+    assign output_inst_tlbsrch = inst_tlbsrch_r & valid;
+    assign output_inst_tlbrd   = inst_tlbrd_r & valid;
+    assign output_inst_tlbwr   = inst_tlbwr_r & valid;
+    assign output_inst_tlbfill = inst_tlbfill_r & valid;
+    assign output_inst_invtlb  = inst_invtlb_r & valid;
+    assign output_invtlb_op    = invtlb_op_r;
+    
+    // TLBSRCH result outputs
+    assign output_tlbsrch_found = tlbsrch_found_r;
+    assign output_tlbsrch_index = tlbsrch_index_r;
 
 /**************** hold trace data ****************/
 

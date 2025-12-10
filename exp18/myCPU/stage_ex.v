@@ -66,6 +66,26 @@ module stage_ex(
     input  wire        input_is_ertn,
     output wire        output_is_ertn,
 
+    // TLB instructions
+    input  wire        input_inst_tlbsrch,
+    input  wire        input_inst_tlbrd,
+    input  wire        input_inst_tlbwr,
+    input  wire        input_inst_tlbfill,
+    input  wire        input_inst_invtlb,
+    input  wire [ 4:0] input_invtlb_op,
+    output wire        output_inst_tlbsrch,
+    output wire        output_inst_tlbrd,
+    output wire        output_inst_tlbwr,
+    output wire        output_inst_tlbfill,
+    output wire        output_inst_invtlb,
+    output wire [ 4:0] output_invtlb_op,
+    
+    // TLBSRCH result
+    input  wire        tlbsrch_found,
+    input  wire [ 3:0] tlbsrch_index,
+    output wire        output_tlbsrch_found,
+    output wire [ 3:0] output_tlbsrch_index,
+
     // CSR flag/value
     input  wire        input_is_csr,
     input  wire [31:0] input_csr_rvalue,
@@ -83,7 +103,15 @@ module stage_ex(
     output wire [31:0] data_sram_addr,
     output wire [ 3:0] data_sram_wstrb,
     output wire [31:0] data_sram_wdata,
-    input  wire        data_sram_addr_ok
+    input  wire        data_sram_addr_ok,
+    
+    // Address translation interface
+    output wire [31:0] data_vaddr,  // Virtual address for translation
+    input  wire [31:0] data_paddr,  // Physical address from translation
+    
+    // TLB exception inputs
+    input  wire        input_tlb_ex,
+    input  wire [ 5:0] input_tlb_ecode
 );
 
     wire valid, readygo;
@@ -302,8 +330,10 @@ module stage_ex(
                                 : 4'b0000)
                              : 4'b0000;
 
-    // assign data_sram_en = ~ex_valid;
-    assign data_sram_addr  = alu_result;
+    // Address translation: output virtual address, use physical address
+    assign data_vaddr = alu_result;  // Virtual address from ALU
+    assign data_sram_addr = data_paddr;  // Use translated physical address
+    
     assign data_sram_wdata = op_st_b ? {4{mem_data[7:0]}}
                              : op_st_h ? {2{mem_data[15:0]}}
                              : op_st_w ? mem_data
@@ -330,9 +360,12 @@ module stage_ex(
         end
     end
 
-    assign ex_valid = (op_st_w | op_ld_w) & (data_sram_addr[1:0] != 2'b0)
-                    | (op_st_h | op_ld_h | op_ld_hu) & (data_sram_addr[0] != 1'b0);
-    assign ecode = `ECODE_ALE;
+    // Use virtual address for alignment check
+    wire ex_ale = (op_st_w | op_ld_w) & (data_vaddr[1:0] != 2'b0)
+                | (op_st_h | op_ld_h | op_ld_hu) & (data_vaddr[0] != 1'b0);
+    
+    assign ex_valid = ex_ale | input_tlb_ex;
+    assign ecode = ex_ale ? `ECODE_ALE : input_tlb_ecode;
     assign esubcode = 9'h0;
 
     assign output_ex_valid  = (ex_valid_r | ex_valid) & valid;
@@ -350,6 +383,18 @@ module stage_ex(
     reg        is_ertn_r;
     reg        is_csr_r;
     reg [31:0] csr_rvalue_r;
+    
+    // TLB instruction registers
+    reg        inst_tlbsrch_r;
+    reg        inst_tlbrd_r;
+    reg        inst_tlbwr_r;
+    reg        inst_tlbfill_r;
+    reg        inst_invtlb_r;
+    reg [ 4:0] invtlb_op_r;
+    
+    // TLBSRCH result registers
+    reg        tlbsrch_found_r;
+    reg [ 3:0] tlbsrch_index_r;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -359,6 +404,14 @@ module stage_ex(
             csr_wmask_r <= 32'h0;
             csr_wvalue_r<= 32'h0;
             is_ertn_r   <= 1'b0;
+            inst_tlbsrch_r <= 1'b0;
+            inst_tlbrd_r   <= 1'b0;
+            inst_tlbwr_r   <= 1'b0;
+            inst_tlbfill_r <= 1'b0;
+            inst_invtlb_r  <= 1'b0;
+            invtlb_op_r    <= 5'b0;
+            tlbsrch_found_r <= 1'b0;
+            tlbsrch_index_r <= 4'b0;
         end else if (pipe.refreshing) begin
             csr_en_r    <= input_csr_en;
             csr_num_r   <= input_csr_num;
@@ -368,6 +421,15 @@ module stage_ex(
             is_ertn_r   <= input_is_ertn;
             is_csr_r    <= input_is_csr;
             csr_rvalue_r<= input_csr_rvalue;
+            inst_tlbsrch_r <= input_inst_tlbsrch;
+            inst_tlbrd_r   <= input_inst_tlbrd;
+            inst_tlbwr_r   <= input_inst_tlbwr;
+            inst_tlbfill_r <= input_inst_tlbfill;
+            inst_invtlb_r  <= input_inst_invtlb;
+            invtlb_op_r    <= input_invtlb_op;
+            // Capture TLBSRCH result when TLBSRCH instruction is in EX stage
+            tlbsrch_found_r <= input_inst_tlbsrch ? tlbsrch_found : tlbsrch_found_r;
+            tlbsrch_index_r <= input_inst_tlbsrch ? tlbsrch_index : tlbsrch_index_r;
         end
     end
 
@@ -384,7 +446,7 @@ module stage_ex(
     assign csr_num = `CSR_BADV;
     assign csr_we = 1'b1;
     assign csr_wmask = 32'hffff_ffff;
-    assign csr_wvalue = data_sram_addr;
+    assign csr_wvalue = data_vaddr;  // Use virtual address for BADV
     assign is_ertn = 1'b0;
     assign is_csr = 1'b1;
     assign csr_rvalue = csr_rvalue_r;
@@ -397,6 +459,18 @@ module stage_ex(
     assign output_is_ertn   = ex_valid ? is_ertn     : is_ertn_r    ;
     assign output_is_csr    = ex_valid ? is_csr      : is_csr_r     ;
     assign output_csr_rvalue= ex_valid ? csr_rvalue  : csr_rvalue_r ;
+    
+    // TLB instruction outputs
+    assign output_inst_tlbsrch = inst_tlbsrch_r;
+    assign output_inst_tlbrd   = inst_tlbrd_r;
+    assign output_inst_tlbwr   = inst_tlbwr_r;
+    assign output_inst_tlbfill = inst_tlbfill_r;
+    assign output_inst_invtlb  = inst_invtlb_r;
+    assign output_invtlb_op    = invtlb_op_r;
+    
+    // TLBSRCH result outputs
+    assign output_tlbsrch_found = tlbsrch_found_r;
+    assign output_tlbsrch_index = tlbsrch_index_r;
 
 /**************** hold write-back stage data ****************/
 

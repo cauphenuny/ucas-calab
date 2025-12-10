@@ -37,6 +37,18 @@ module stage_wb(
     // ERTN flag
     input  wire        input_is_ertn,
 
+    // TLB instructions
+    input  wire        input_inst_tlbsrch,
+    input  wire        input_inst_tlbrd,
+    input  wire        input_inst_tlbwr,
+    input  wire        input_inst_tlbfill,
+    input  wire        input_inst_invtlb,
+    input  wire [ 4:0] input_invtlb_op,
+    
+    // TLBSRCH result
+    input  wire        input_tlbsrch_found,
+    input  wire [ 3:0] input_tlbsrch_index,
+
     // CSR flag/value
     input  wire        input_is_csr,
     input  wire [31:0] input_csr_rvalue,
@@ -60,7 +72,19 @@ module stage_wb(
     output  wire         ertn_flush,
     output  wire         wb_ex_valid,
     output  wire [ 5:0]  wb_ecode,
-    output  wire [ 8:0]  wb_esubcode
+    output  wire [ 8:0]  wb_esubcode,
+    
+    // TLB instruction outputs
+    output  wire         wb_inst_tlbsrch,
+    output  wire         wb_inst_tlbrd,
+    output  wire         wb_inst_tlbwr,
+    output  wire         wb_inst_tlbfill,
+    output  wire         wb_inst_invtlb,
+    output  wire [ 4:0]  wb_invtlb_op,
+    
+    // TLBSRCH result outputs
+    output  wire         wb_tlbsrch_found,
+    output  wire [ 3:0]  wb_tlbsrch_index
 );
 
     wire valid;
@@ -89,6 +113,18 @@ module stage_wb(
     reg        is_ertn_r;
     reg        is_csr_r;
     reg [31:0] csr_rvalue_r;
+    
+    // TLB instruction registers
+    reg        inst_tlbsrch_r;
+    reg        inst_tlbrd_r;
+    reg        inst_tlbwr_r;
+    reg        inst_tlbfill_r;
+    reg        inst_invtlb_r;
+    reg [ 4:0] invtlb_op_r;
+    
+    // TLBSRCH result registers
+    reg        tlbsrch_found_r;
+    reg [ 3:0] tlbsrch_index_r;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -112,6 +148,14 @@ module stage_wb(
             is_ertn_r  <= input_is_ertn;
             is_csr_r   <= input_is_csr;
             csr_rvalue_r<= input_csr_rvalue;
+            inst_tlbsrch_r <= input_inst_tlbsrch;
+            inst_tlbrd_r   <= input_inst_tlbrd;
+            inst_tlbwr_r   <= input_inst_tlbwr;
+            inst_tlbfill_r <= input_inst_tlbfill;
+            inst_invtlb_r  <= input_inst_invtlb;
+            invtlb_op_r    <= input_invtlb_op;
+            tlbsrch_found_r <= input_tlbsrch_found;
+            tlbsrch_index_r <= input_tlbsrch_index;
         end
     end
 
@@ -133,5 +177,17 @@ module stage_wb(
     assign wb_ex_valid  = valid & ex_valid_r;
     assign wb_ecode     = ecode_r;
     assign wb_esubcode  = esubcode_r;
+    
+    // TLB instruction outputs
+    assign wb_inst_tlbsrch = valid & inst_tlbsrch_r;
+    assign wb_inst_tlbrd   = valid & inst_tlbrd_r;
+    assign wb_inst_tlbwr   = valid & inst_tlbwr_r;
+    assign wb_inst_tlbfill = valid & inst_tlbfill_r;
+    assign wb_inst_invtlb  = valid & inst_invtlb_r;
+    assign wb_invtlb_op    = invtlb_op_r;
+    
+    // TLBSRCH result outputs
+    assign wb_tlbsrch_found = tlbsrch_found_r;
+    assign wb_tlbsrch_index = tlbsrch_index_r;
 
 endmodule
