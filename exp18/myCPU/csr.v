@@ -274,7 +274,7 @@ module csr(
 
     always @(posedge clk) begin
         if (badv_ex)
-            csr_badv <= wb_pc;  // For now, use wb_pc; should be bad_vaddr from exception
+            csr_badv <= badv_wdata;  // use captured bad virtual address
         else if (csr_we && badv_wsel)
             csr_badv <= badv_wdata;
     end
@@ -422,8 +422,8 @@ module csr(
             csr_tlbehi[`CSR_TLBEHI_VPPN] <= 19'b0;
         end
         else if (badv_ex) begin
-            // Update VPPN on TLB/page exceptions
-            csr_tlbehi[`CSR_TLBEHI_VPPN] <= wb_pc[31:13];  // Should be bad_vaddr[31:13]
+            // Update VPPN on TLB/page exceptions using bad virtual address
+            csr_tlbehi[`CSR_TLBEHI_VPPN] <= badv_wdata[31:13];
         end
         else if (tlbrd_en) begin
             // TLBRD: update VPPN from TLB
