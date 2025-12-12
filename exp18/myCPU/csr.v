@@ -399,7 +399,8 @@ module csr(
         end
         else if (tlbrd_en) begin
             // TLBRD: update PS and NE based on read result
-            csr_tlbidx[`CSR_TLBIDX_PS] <= r_ps;
+            // If TLB entry is invalid (r_e=0), PS should be cleared to 0
+            csr_tlbidx[`CSR_TLBIDX_PS] <= r_e ? r_ps : 6'b0;
             csr_tlbidx[`CSR_TLBIDX_NE] <= ~r_e;
         end
         else if (csr_we && tlbidx_wsel) begin
