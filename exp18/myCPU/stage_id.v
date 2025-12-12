@@ -355,6 +355,7 @@ module stage_id(
     assign invtlb_op_valid = (invtlb_op == 5'h0)
                            | (invtlb_op == 5'h1)
                            | (invtlb_op == 5'h2)
+                           | (invtlb_op == 5'h3)
                            | (invtlb_op == 5'h4)
                            | (invtlb_op == 5'h5)
                            | (invtlb_op == 5'h6);
