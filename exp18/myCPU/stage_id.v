@@ -69,6 +69,8 @@ module stage_id(
     output wire        output_inst_tlbfill,
     output wire        output_inst_invtlb,
     output wire [ 4:0] output_invtlb_op,
+    output wire [ 9:0] output_invtlb_asid,
+    output wire [31:0] output_invtlb_vaddr,
 
     // I/O
     input  wire [31:0] rf_rdata1, rf_rdata2,
@@ -564,6 +566,8 @@ module stage_id(
     assign output_inst_tlbfill = inst_tlbfill & valid;
     assign output_inst_invtlb  = inst_invtlb  & valid;
     assign output_invtlb_op    = invtlb_op;
+    assign output_invtlb_asid  = (inst_invtlb & valid) ? rj_value[9:0] : 10'b0;
+    assign output_invtlb_vaddr = (inst_invtlb & valid) ? rkd_value : 32'h0;
     
     // br_stall: 转移指令计算未完成，需要阻塞取指
     // 需要寄存器值的转移指令：beq, bne, blt, bge, bltu, bgeu, jirl

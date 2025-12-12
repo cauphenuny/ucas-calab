@@ -62,12 +62,16 @@ module stage_mem(
     input  wire        input_inst_tlbfill,
     input  wire        input_inst_invtlb,
     input  wire [ 4:0] input_invtlb_op,
+    input  wire [ 9:0] input_invtlb_asid,
+    input  wire [31:0] input_invtlb_vaddr,
     output wire        output_inst_tlbsrch,
     output wire        output_inst_tlbrd,
     output wire        output_inst_tlbwr,
     output wire        output_inst_tlbfill,
     output wire        output_inst_invtlb,
     output wire [ 4:0] output_invtlb_op,
+    output wire [ 9:0] output_invtlb_asid,
+    output wire [31:0] output_invtlb_vaddr,
     
     // TLBSRCH result
     input  wire        input_tlbsrch_found,
@@ -201,6 +205,8 @@ module stage_mem(
     reg        inst_tlbfill_r;
     reg        inst_invtlb_r;
     reg [ 4:0] invtlb_op_r;
+    reg [ 9:0] invtlb_asid_r;
+    reg [31:0] invtlb_vaddr_r;
     
     // TLBSRCH result registers
     reg        tlbsrch_found_r;
@@ -220,6 +226,8 @@ module stage_mem(
             inst_tlbfill_r <= 1'b0;
             inst_invtlb_r  <= 1'b0;
             invtlb_op_r    <= 5'b0;
+            invtlb_asid_r  <= 10'b0;
+            invtlb_vaddr_r <= 32'h0;
             tlbsrch_found_r <= 1'b0;
             tlbsrch_index_r <= 4'b0;
         end else if (pipe.refreshing) begin
@@ -237,6 +245,8 @@ module stage_mem(
             inst_tlbfill_r <= input_inst_tlbfill;
             inst_invtlb_r  <= input_inst_invtlb;
             invtlb_op_r    <= input_invtlb_op;
+            invtlb_asid_r  <= input_invtlb_asid;
+            invtlb_vaddr_r <= input_invtlb_vaddr;
             tlbsrch_found_r <= input_tlbsrch_found;
             tlbsrch_index_r <= input_tlbsrch_index;
         end
@@ -258,6 +268,8 @@ module stage_mem(
     assign output_inst_tlbfill = inst_tlbfill_r & valid;
     assign output_inst_invtlb  = inst_invtlb_r & valid;
     assign output_invtlb_op    = invtlb_op_r;
+    assign output_invtlb_asid  = invtlb_asid_r;
+    assign output_invtlb_vaddr = invtlb_vaddr_r;
     
     // TLBSRCH result outputs
     assign output_tlbsrch_found = tlbsrch_found_r;

@@ -493,6 +493,8 @@ module mycpu_top(
         // invtlb opcode
         .invtlb_valid(invtlb_valid),
         .invtlb_op(invtlb_op),
+        .invtlb_asid(wb_invtlb_asid),
+        .invtlb_vppn(wb_invtlb_vaddr[31:13]),
 
         // write port
         .we(tlb_we),
@@ -701,6 +703,14 @@ module mycpu_top(
     wire [ 4:0] wb_invtlb_op;
     wire        wb_tlbsrch_found;
     wire [ 3:0] wb_tlbsrch_index;
+    wire [ 9:0] id_invtlb_asid;
+    wire [31:0] id_invtlb_vaddr;
+    wire [ 9:0] ex_invtlb_asid;
+    wire [31:0] ex_invtlb_vaddr;
+    wire [ 9:0] mem_invtlb_asid;
+    wire [31:0] mem_invtlb_vaddr;
+    wire [ 9:0] wb_invtlb_asid;
+    wire [31:0] wb_invtlb_vaddr;
 
     // CSR bundle
     wire        id_csr_en;
@@ -805,6 +815,8 @@ module mycpu_top(
         .output_inst_tlbfill(),
         .output_inst_invtlb(),
         .output_invtlb_op(),
+        .output_invtlb_asid(id_invtlb_asid),
+        .output_invtlb_vaddr(id_invtlb_vaddr),
 
         .output_ex_valid(id_ex_valid),
         .output_ecode(id_ecode),
@@ -871,12 +883,16 @@ module mycpu_top(
         .input_inst_tlbfill(u_stage_id.output_inst_tlbfill),
         .input_inst_invtlb(u_stage_id.output_inst_invtlb),
         .input_invtlb_op(u_stage_id.output_invtlb_op),
+        .input_invtlb_asid(id_invtlb_asid),
+        .input_invtlb_vaddr(id_invtlb_vaddr),
         .output_inst_tlbsrch(ex_inst_tlbsrch),
         .output_inst_tlbrd(),
         .output_inst_tlbwr(),
         .output_inst_tlbfill(),
         .output_inst_invtlb(),
         .output_invtlb_op(),
+        .output_invtlb_asid(ex_invtlb_asid),
+        .output_invtlb_vaddr(ex_invtlb_vaddr),
         
         // TLBSRCH result
         .tlbsrch_found(s1_found),
@@ -966,12 +982,16 @@ module mycpu_top(
         .input_inst_tlbfill(u_stage_ex.output_inst_tlbfill),
         .input_inst_invtlb(u_stage_ex.output_inst_invtlb),
         .input_invtlb_op(u_stage_ex.output_invtlb_op),
+        .input_invtlb_asid(ex_invtlb_asid),
+        .input_invtlb_vaddr(ex_invtlb_vaddr),
         .output_inst_tlbsrch(),
         .output_inst_tlbrd(),
         .output_inst_tlbwr(),
         .output_inst_tlbfill(),
         .output_inst_invtlb(),
         .output_invtlb_op(),
+        .output_invtlb_asid(mem_invtlb_asid),
+        .output_invtlb_vaddr(mem_invtlb_vaddr),
         
         // TLBSRCH result
         .input_tlbsrch_found(u_stage_ex.output_tlbsrch_found),
@@ -1027,6 +1047,8 @@ module mycpu_top(
         .input_inst_tlbfill(u_stage_mem.output_inst_tlbfill),
         .input_inst_invtlb(u_stage_mem.output_inst_invtlb),
         .input_invtlb_op(u_stage_mem.output_invtlb_op),
+        .input_invtlb_asid(mem_invtlb_asid),
+        .input_invtlb_vaddr(mem_invtlb_vaddr),
         
         // TLBSRCH result
         .input_tlbsrch_found(u_stage_mem.output_tlbsrch_found),
@@ -1059,6 +1081,8 @@ module mycpu_top(
         .wb_inst_tlbfill(wb_inst_tlbfill),
         .wb_inst_invtlb(wb_inst_invtlb),
         .wb_invtlb_op(wb_invtlb_op),
+        .wb_invtlb_asid(wb_invtlb_asid),
+        .wb_invtlb_vaddr(wb_invtlb_vaddr),
         
         // TLBSRCH result outputs
         .wb_tlbsrch_found(wb_tlbsrch_found),

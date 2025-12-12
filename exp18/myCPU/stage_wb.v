@@ -44,6 +44,8 @@ module stage_wb(
     input  wire        input_inst_tlbfill,
     input  wire        input_inst_invtlb,
     input  wire [ 4:0] input_invtlb_op,
+    input  wire [ 9:0] input_invtlb_asid,
+    input  wire [31:0] input_invtlb_vaddr,
     
     // TLBSRCH result
     input  wire        input_tlbsrch_found,
@@ -81,6 +83,8 @@ module stage_wb(
     output  wire         wb_inst_tlbfill,
     output  wire         wb_inst_invtlb,
     output  wire [ 4:0]  wb_invtlb_op,
+    output  wire [ 9:0]  wb_invtlb_asid,
+    output  wire [31:0]  wb_invtlb_vaddr,
     
     // TLBSRCH result outputs
     output  wire         wb_tlbsrch_found,
@@ -121,6 +125,8 @@ module stage_wb(
     reg        inst_tlbfill_r;
     reg        inst_invtlb_r;
     reg [ 4:0] invtlb_op_r;
+    reg [ 9:0] invtlb_asid_r;
+    reg [31:0] invtlb_vaddr_r;
     
     // TLBSRCH result registers
     reg        tlbsrch_found_r;
@@ -132,6 +138,8 @@ module stage_wb(
             rf_waddr <= 5'h0;
             rf_we <= 1'b0;
             rf_wdata <= 32'h0;
+            invtlb_asid_r <= 10'b0;
+            invtlb_vaddr_r <= 32'h0;
         end else if (pipe.refreshing) begin
             pc <= input_pc;
             rf_waddr <= input_rf_waddr;
@@ -154,6 +162,8 @@ module stage_wb(
             inst_tlbfill_r <= input_inst_tlbfill;
             inst_invtlb_r  <= input_inst_invtlb;
             invtlb_op_r    <= input_invtlb_op;
+            invtlb_asid_r  <= input_invtlb_asid;
+            invtlb_vaddr_r <= input_invtlb_vaddr;
             tlbsrch_found_r <= input_tlbsrch_found;
             tlbsrch_index_r <= input_tlbsrch_index;
         end
@@ -185,6 +195,8 @@ module stage_wb(
     assign wb_inst_tlbfill = valid & inst_tlbfill_r;
     assign wb_inst_invtlb  = valid & inst_invtlb_r;
     assign wb_invtlb_op    = invtlb_op_r;
+    assign wb_invtlb_asid  = invtlb_asid_r;
+    assign wb_invtlb_vaddr = invtlb_vaddr_r;
     
     // TLBSRCH result outputs
     assign wb_tlbsrch_found = tlbsrch_found_r;

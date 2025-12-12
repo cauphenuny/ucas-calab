@@ -33,6 +33,8 @@ module tlb #(
     // invtlb opcode (reuse search port 1 signals)
     input  wire                 invtlb_valid,
     input  wire [ 4:0]          invtlb_op,
+    input  wire [ 9:0]          invtlb_asid,
+    input  wire [18:0]          invtlb_vppn,
 
     // write port
     input  wire                 we, // write enable
@@ -105,8 +107,8 @@ generate
     for (i = 0; i < TLBNUM; i = i + 1) begin
         assign inv_cond1[i] = tlb_g[i] == 1'b0;
         assign inv_cond2[i] = tlb_g[i] == 1'b1;
-        assign inv_cond3[i] = (tlb_asid[i] == s1_asid);
-        assign inv_cond4[i] = (tlb_vppn[i] == s1_vppn);
+        assign inv_cond3[i] = (tlb_asid[i] == invtlb_asid);
+        assign inv_cond4[i] = (tlb_vppn[i] == invtlb_vppn);
         assign inv_match[i] =
             (invtlb_op == 5'h0) | // clear all
             (invtlb_op == 5'h1) | // clear all
