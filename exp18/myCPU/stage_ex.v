@@ -210,10 +210,18 @@ module stage_ex(
             data_req_en <= 1'b0;
     end
 
+    wire mem_req_ready;
+    wire tlbsrch_ready;
+
+    assign mem_req_ready = ~is_mem_op
+                        | (data_sram_req & data_sram_addr_ok)
+                        | req_ok_hold
+                        | ex_valid;
+
     assign readygo =  ~valid | (
                         (((current_state == STATE_REQ) & alu_output_valid) | (current_state == STATE_DONE))
-                        & 
-                        (~is_mem_op | (data_sram_req & data_sram_addr_ok) | req_ok_hold | ex_valid)
+                        & mem_req_ready
+                        & tlbsrch_ready
                     );
 
     wire alu_req_valid = valid && (current_state == STATE_REQ) && ~(older_ex & long_op) && ~cancel;
@@ -395,6 +403,8 @@ module stage_ex(
     // TLBSRCH result registers
     reg        tlbsrch_found_r;
     reg [ 3:0] tlbsrch_index_r;
+    reg        tlbsrch_res_valid;
+    reg        inst_tlbsrch_r_d;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -410,8 +420,6 @@ module stage_ex(
             inst_tlbfill_r <= 1'b0;
             inst_invtlb_r  <= 1'b0;
             invtlb_op_r    <= 5'b0;
-            tlbsrch_found_r <= 1'b0;
-            tlbsrch_index_r <= 4'b0;
         end else if (pipe.refreshing) begin
             csr_en_r    <= input_csr_en;
             csr_num_r   <= input_csr_num;
@@ -427,11 +435,33 @@ module stage_ex(
             inst_tlbfill_r <= input_inst_tlbfill;
             inst_invtlb_r  <= input_inst_invtlb;
             invtlb_op_r    <= input_invtlb_op;
-            // Capture TLBSRCH result when TLBSRCH instruction is in EX stage
-            tlbsrch_found_r <= input_inst_tlbsrch ? tlbsrch_found : tlbsrch_found_r;
-            tlbsrch_index_r <= input_inst_tlbsrch ? tlbsrch_index : tlbsrch_index_r;
         end
     end
+
+    always @(posedge clk) begin
+        if (rst) begin
+            inst_tlbsrch_r_d <= 1'b0;
+        end else begin
+            inst_tlbsrch_r_d <= inst_tlbsrch_r;
+        end
+    end
+
+    // Capture TLBSRCH result one cycle later to match TLB latency
+    always @(posedge clk) begin
+        if (rst) begin
+            tlbsrch_found_r  <= 1'b0;
+            tlbsrch_index_r  <= 4'b0;
+            tlbsrch_res_valid<= 1'b0;
+        end else if (~inst_tlbsrch_r) begin
+            tlbsrch_res_valid<= 1'b0;
+        end else if (~tlbsrch_res_valid && inst_tlbsrch_r_d) begin
+            tlbsrch_found_r  <= tlbsrch_found;
+            tlbsrch_index_r  <= tlbsrch_index;
+            tlbsrch_res_valid<= 1'b1;
+        end
+    end
+
+    assign tlbsrch_ready = ~inst_tlbsrch_r | tlbsrch_res_valid;
 
     wire        csr_en;
     wire [13:0] csr_num;

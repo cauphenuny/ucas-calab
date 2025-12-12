@@ -540,9 +540,11 @@ module mycpu_top(
     // TLB search port 1 connections (load/store) - connected from EX stage
     wire [31:0] data_vaddr;  // Virtual address from EX stage
     wire [31:0] data_paddr;  // Physical address to EX stage
+    wire        ex_inst_tlbsrch;  // TLBSRCH instruction in EX stage
     
-    assign s1_vppn = data_vaddr[31:13];
-    assign s1_va_bit12 = data_vaddr[12];
+    // For TLBSRCH, use CSR.TLBEHI; for load/store, use data_vaddr
+    assign s1_vppn = ex_inst_tlbsrch ? u_csr.csr_tlbehi[`CSR_TLBEHI_VPPN] : data_vaddr[31:13];
+    assign s1_va_bit12 = ex_inst_tlbsrch ? 1'b0 : data_vaddr[12];
     assign s1_asid = u_csr.csr_asid[`CSR_ASID_ASID];
     
     // DMW check for load/store
@@ -637,9 +639,46 @@ module mycpu_top(
     wire csr_hazard_ex  = u_stage_ex.valid  & ex_csr_we  & (ex_csr_num  == id_csr_num);
     wire csr_hazard_mem = u_stage_mem.valid & mem_csr_we & (mem_csr_num == id_csr_num);
     wire csr_hazard_wb  = wb_valid & csr_we & (csr_num == id_csr_num);
-    wire id_stall_csr   = id_is_csr & (csr_hazard_ex | csr_hazard_mem | csr_hazard_wb);
+    
+    // Exception implicit CSR writes: exceptions write CRMD, PRMD, ERA, ESTAT, and may write BADV/TLBEHI
+    // If ID reads any of these CSRs and there's a pending exception, we must stall
+    wire ex_may_write_csr  = ex_ex_valid;
+    wire mem_may_write_csr = mem_ex_valid;
+    wire wb_may_write_csr  = wb_ex_valid;
+    
+    wire id_reads_ex_modified_csr = (id_csr_num == `CSR_CRMD)   ||
+                                     (id_csr_num == `CSR_PRMD)   ||
+                                     (id_csr_num == `CSR_ERA)    ||
+                                     (id_csr_num == `CSR_ESTAT)  ||
+                                     (id_csr_num == `CSR_BADV)   ||
+                                     (id_csr_num == `CSR_TLBEHI) ||
+                                     (id_csr_num == `CSR_TLBIDX);
+    
+    wire csr_ex_hazard_ex  = ex_may_write_csr  & id_reads_ex_modified_csr;
+    wire csr_ex_hazard_mem = mem_may_write_csr & id_reads_ex_modified_csr;
+    wire csr_ex_hazard_wb  = wb_may_write_csr  & id_reads_ex_modified_csr;
+    
+    wire id_stall_csr = id_is_csr & (csr_hazard_ex | csr_hazard_mem | csr_hazard_wb |
+                                     csr_ex_hazard_ex | csr_ex_hazard_mem | csr_ex_hazard_wb);
 
-    wire id_stall = id_stall1 | id_stall2 | id_stall_csr;
+    // TLBSRCH reads CSR in EX stage, needs to wait for preceding CSR writes to complete
+    wire id_is_tlbsrch = u_stage_id.output_inst_tlbsrch;
+    
+    wire ex_writes_tlbsrch_csr  = u_stage_ex.valid  & ex_csr_we  & ((ex_csr_num  == `CSR_TLBEHI) | (ex_csr_num  == `CSR_ASID));
+    wire mem_writes_tlbsrch_csr = u_stage_mem.valid & mem_csr_we & ((mem_csr_num == `CSR_TLBEHI) | (mem_csr_num == `CSR_ASID));
+    wire wb_writes_tlbsrch_csr  = wb_valid & csr_we & ((csr_num == `CSR_TLBEHI) | (csr_num == `CSR_ASID));
+    
+    wire id_stall_tlbsrch = id_is_tlbsrch & (ex_writes_tlbsrch_csr | mem_writes_tlbsrch_csr | wb_writes_tlbsrch_csr);
+
+    // TLBSRCH updates CSR_TLBIDX in WB stage only, so CSR readers targeting TLBIDX
+    // must wait until older TLBSRCH instructions retire.
+    wire id_reads_tlbidx = id_is_csr && (id_csr_num == `CSR_TLBIDX);
+    wire ex_pending_tlbsrch  = u_stage_ex.valid  & u_stage_ex.output_inst_tlbsrch;
+    wire mem_pending_tlbsrch = u_stage_mem.valid & u_stage_mem.output_inst_tlbsrch;
+    wire wb_pending_tlbsrch  = wb_inst_tlbsrch;
+    wire id_stall_tlbidx = id_reads_tlbidx & (ex_pending_tlbsrch | mem_pending_tlbsrch | wb_pending_tlbsrch);
+
+    wire id_stall = id_stall1 | id_stall2 | id_stall_csr | id_stall_tlbsrch | id_stall_tlbidx;
 
     // Exception info
     wire        id_ex_valid;
@@ -832,7 +871,7 @@ module mycpu_top(
         .input_inst_tlbfill(u_stage_id.output_inst_tlbfill),
         .input_inst_invtlb(u_stage_id.output_inst_invtlb),
         .input_invtlb_op(u_stage_id.output_invtlb_op),
-        .output_inst_tlbsrch(),
+        .output_inst_tlbsrch(ex_inst_tlbsrch),
         .output_inst_tlbrd(),
         .output_inst_tlbwr(),
         .output_inst_tlbfill(),
