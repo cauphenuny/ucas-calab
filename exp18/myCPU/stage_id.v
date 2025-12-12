@@ -458,7 +458,8 @@ module stage_id(
     assign gr_we         = legal &
                            ~inst_st_b & ~inst_st_h & ~inst_st_w & ~inst_beq & ~inst_bne &
                            ~inst_b & ~inst_blt & ~inst_bge & ~inst_bltu & ~inst_bgeu & 
-                           ~inst_syscall & ~inst_ertn & ~inst_syscall;
+                           ~inst_syscall & ~inst_ertn & ~inst_syscall &
+                           ~inst_tlbsrch & ~inst_tlbrd & ~inst_tlbwr & ~inst_tlbfill & ~inst_invtlb;
 
     assign mem_we        = inst_st_b | inst_st_h | inst_st_w;
     assign dest          = dst_is_r1 ? 5'd1 : dst_is_rj ? rj : rd;
