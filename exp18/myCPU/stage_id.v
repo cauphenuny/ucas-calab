@@ -236,6 +236,8 @@ module stage_id(
     wire        inst_tlbwr;
     wire        inst_tlbfill;
     wire        inst_invtlb;
+    wire        inst_invtlb_raw;
+    wire        invtlb_op_valid;
 
     wire        exception_ine;
     wire        exception_intr;
@@ -349,7 +351,14 @@ module stage_id(
     assign inst_tlbrd   = ~ex_valid_r & (inst == 32'h06482c00);
     assign inst_tlbwr   = ~ex_valid_r & (inst == 32'h06483000);
     assign inst_tlbfill = ~ex_valid_r & (inst == 32'h06483400);
-    assign inst_invtlb  = ~ex_valid_r & op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h13];
+    assign inst_invtlb_raw = ~ex_valid_r & op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h13];
+    assign invtlb_op_valid = (invtlb_op == 5'h0)
+                           | (invtlb_op == 5'h1)
+                           | (invtlb_op == 5'h2)
+                           | (invtlb_op == 5'h4)
+                           | (invtlb_op == 5'h5)
+                           | (invtlb_op == 5'h6);
+    assign inst_invtlb = inst_invtlb_raw & invtlb_op_valid;
     
     wire [4:0] invtlb_op = inst[4:0];  // INVTLB operation code
 
