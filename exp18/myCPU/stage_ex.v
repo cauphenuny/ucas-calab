@@ -215,7 +215,6 @@ module stage_ex(
     end
 
     wire mem_req_ready;
-    wire tlbsrch_ready;
 
     assign mem_req_ready = ~is_mem_op
                         | (data_sram_req & data_sram_addr_ok)
@@ -225,7 +224,6 @@ module stage_ex(
     assign readygo =  ~valid | (
                         (((current_state == STATE_REQ) & alu_output_valid) | (current_state == STATE_DONE))
                         & mem_req_ready
-                        & tlbsrch_ready
                     );
 
     wire alu_req_valid = valid && (current_state == STATE_REQ) && ~(older_ex & long_op) && ~cancel;
@@ -410,7 +408,6 @@ module stage_ex(
     reg        tlbsrch_found_r;
     reg [ 3:0] tlbsrch_index_r;
     reg        tlbsrch_res_valid;
-    reg        inst_tlbsrch_r_d;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -447,31 +444,6 @@ module stage_ex(
             invtlb_vaddr_r <= input_invtlb_vaddr;
         end
     end
-
-    always @(posedge clk) begin
-        if (rst) begin
-            inst_tlbsrch_r_d <= 1'b0;
-        end else begin
-            inst_tlbsrch_r_d <= inst_tlbsrch_r;
-        end
-    end
-
-    // Capture TLBSRCH result one cycle later to match TLB latency
-    always @(posedge clk) begin
-        if (rst) begin
-            tlbsrch_found_r  <= 1'b0;
-            tlbsrch_index_r  <= 4'b0;
-            tlbsrch_res_valid<= 1'b0;
-        end else if (~inst_tlbsrch_r) begin
-            tlbsrch_res_valid<= 1'b0;
-        end else if (~tlbsrch_res_valid && inst_tlbsrch_r_d) begin
-            tlbsrch_found_r  <= tlbsrch_found;
-            tlbsrch_index_r  <= tlbsrch_index;
-            tlbsrch_res_valid<= 1'b1;
-        end
-    end
-
-    assign tlbsrch_ready = ~inst_tlbsrch_r | tlbsrch_res_valid;
 
     wire        csr_en;
     wire [13:0] csr_num;
@@ -511,8 +483,8 @@ module stage_ex(
     assign output_invtlb_vaddr = invtlb_vaddr_r;
     
     // TLBSRCH result outputs
-    assign output_tlbsrch_found = tlbsrch_found_r;
-    assign output_tlbsrch_index = tlbsrch_index_r;
+    assign output_tlbsrch_found = tlbsrch_found;
+    assign output_tlbsrch_index = tlbsrch_index;
 
 /**************** hold write-back stage data ****************/
 
