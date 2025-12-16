@@ -22,6 +22,9 @@ module stage_if(
     input wire [3:0]  input_tlb_index,
     input wire [5:0]  input_tlb_ps,
 
+    // ADEF exception input
+    input wire        input_except_adef,
+
     // exception info
     output wire [5:0]  output_ecode,
     output wire [8:0]  output_esubcode,
@@ -83,7 +86,7 @@ module stage_if(
     assign validout = raw_validout & ~cancelled & ~cancelout;
 
     reg [31:0] pc, inst;
-    wire except_adef = (pc[1:0] != 2'b0);
+    reg except_adef_r;
     
     reg tlb_ex_r;
     reg tlb_found_r;
@@ -99,6 +102,7 @@ module stage_if(
             tlb_index_r <= 4'h0;
             tlb_ps_r <= 6'h0;
             tlb_ecode_r <= 6'h0;
+            except_adef_r <= 1'b0;
         end else if (refreshing) begin
             pc <= input_pc;
             tlb_ex_r <= input_tlb_ex;
@@ -106,6 +110,7 @@ module stage_if(
             tlb_found_r <= input_tlb_ex ? input_tlb_found : 1'b0;
             tlb_index_r <= input_tlb_ex ? input_tlb_index : 4'h0;
             tlb_ps_r <= input_tlb_ex ? input_tlb_ps : 6'h0;
+            except_adef_r <= input_except_adef;
         end
     end
 
@@ -158,6 +163,9 @@ module stage_if(
     always @(posedge clk) begin
         if (rst) begin
             already_ok <= 1'b0;
+        end else if (refreshing && (input_tlb_ex || input_except_adef)) begin
+            // No SRAM data needed when we already know this fetch faults
+            already_ok <= 1'b1;
         end else if (refreshing && buffer_valid) begin
             already_ok <= 1'b1;
         end else if (inst_sram_data_ok && (~already_ok || refreshing)) begin
@@ -167,6 +175,7 @@ module stage_if(
         end
     end
 
+    // Allow pipeline to advance as soon as we know an exception, without waiting for SRAM data
     assign readygo = already_ok;
 
     // assign inst_sram_addr = pc;
@@ -179,10 +188,10 @@ module stage_if(
     assign output_pc = pc;
     assign output_inst = inst;
 
-    wire has_exception = except_adef | tlb_ex_r;
+    wire has_exception = except_adef_r | tlb_ex_r;
     assign output_ex_valid = has_exception & validout;
-    assign output_ecode = except_adef ? `ECODE_ADEF : tlb_ecode_r;
-    assign output_esubcode = except_adef ? `ESUBCODE_ADEF : 9'h0;
+    assign output_ecode = except_adef_r ? `ECODE_ADEF : tlb_ecode_r;
+    assign output_esubcode = except_adef_r ? `ESUBCODE_ADEF : 9'h0;
     assign output_tlb_found = tlb_found_r;
     assign output_tlb_index = tlb_index_r;
     assign output_tlb_ps = tlb_ps_r;
@@ -195,4 +204,3 @@ module stage_if(
     assign output_csr_wvalue = pc;
 
 endmodule
-
