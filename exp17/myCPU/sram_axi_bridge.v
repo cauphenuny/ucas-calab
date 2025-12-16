@@ -324,8 +324,6 @@ module sram_axi_bridge (
             arcache_r        <= 4'h0;
             arprot_r         <= 3'h0;
             arvalid_r        <= 1'b0;
-            inst_rd_inflight <= 1'b0;
-            data_rd_inflight <= 1'b0;
         end else begin
             case (ar_state_curr)
                 AR_IDLE: begin
@@ -339,7 +337,6 @@ module sram_axi_bridge (
                             arsize_r         <= data_rd_size_buf;
                             arlen_r          <= 8'd0;
                             arvalid_r        <= 1'b1;
-                            data_rd_inflight <= 1'b1;
                         end
                         // 取指读
                         else if (inst_rd_req_buf) begin
@@ -348,7 +345,6 @@ module sram_axi_bridge (
                             arsize_r         <= inst_rd_size_buf;
                             arlen_r          <= 8'd0;
                             arvalid_r        <= 1'b1;
-                            inst_rd_inflight <= 1'b1;
                         end
                     end
                 end
@@ -407,15 +403,31 @@ module sram_axi_bridge (
 
     always @(posedge aclk) begin
         if (!aresetn) begin
-            rready_r       <= 1'b0;
-            inst_rdata_buf <= 32'h0;
-            data_rdata_buf <= 32'h0;
-            inst_data_ok_r <= 1'b0;
-            data_data_ok_r <= 1'b0;
+            rready_r         <= 1'b0;
+            inst_rdata_buf   <= 32'h0;
+            data_rdata_buf   <= 32'h0;
+            inst_data_ok_r   <= 1'b0;
+            data_data_ok_r   <= 1'b0;
+            inst_rd_inflight <= 1'b0;
+            data_rd_inflight <= 1'b0;
         end else begin
             // 默认data_ok为0(脉冲信号)
             inst_data_ok_r <= 1'b0;
             data_data_ok_r <= 1'b0;
+            
+            // 设置在途标志：当AR通道握手成功时
+            if (ar_state_curr == AR_SEND && arvalid_r && arready) begin
+                if (arid_r == 4'd0) begin
+                    inst_rd_inflight <= 1'b1;
+                end else if (arid_r == 4'd1) begin
+                    data_rd_inflight <= 1'b1;
+                end
+            end
+            
+            // 写完成时产生data_ok
+            if (w_state_curr == W_RESP && bvalid && bready_r) begin
+                data_data_ok_r <= 1'b1;
+            end
             
             case (r_state_curr)
                 R_IDLE: begin
@@ -435,10 +447,12 @@ module sram_axi_bridge (
                             // 取指读数据
                             inst_rdata_buf <= rdata;
                             inst_data_ok_r <= 1'b1;
+                            inst_rd_inflight <= 1'b0;
                         end else if (rid == 4'd1) begin
                             // 数据读数据
                             data_rdata_buf <= rdata;
                             data_data_ok_r <= 1'b1;
+                            data_rd_inflight <= 1'b0;
                         end
                         
                         // 如果没有其他读在途，准备返回空闲
@@ -451,15 +465,6 @@ module sram_axi_bridge (
                 default: begin
                 end
             endcase
-            
-            // 清除读在途标志(在接收到对应数据后)
-            if (rvalid && rready_r && rlast) begin
-                if (rid == 4'd0) begin
-                    inst_rd_inflight <= 1'b0;
-                end else if (rid == 4'd1) begin
-                    data_rd_inflight <= 1'b0;
-                end
-            end
         end
     end
     
@@ -568,7 +573,6 @@ module sram_axi_bridge (
                     bready_r <= 1'b1;
                     // 接收到写响应
                     if (bvalid && bready_r) begin
-                        data_data_ok_r <= 1'b1;
                         wr_inflight    <= 1'b0;
                         bready_r       <= 1'b0;
                     end

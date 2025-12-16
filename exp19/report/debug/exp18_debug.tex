@@ -1,0 +1,87 @@
+\subsection{exp18}
+\subsubsection{TLB例外时BADV和TLBEHI寄存器记录错误虚拟地址}
+
+在发生TLB例外时，最初使用了\texttt{wb\_pc}（写回级PC）作为出错地址写入BADV和TLBEHI，导致CSR寄存器BADV和TLBEHI中记录的出错虚拟地址不正确，如下：
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    commentstyle=\color{gray},
+    keywordstyle=\color{blue},
+    stringstyle=\color{red},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+}
+
+\begin{lstlisting}[language=Verilog]
+always @(posedge clk) begin
+    if (badv_ex)
+        csr_badv <= wb_pc;
+    ...
+end
+
+// TLBEHI.VPPN更新
+else if (badv_ex) begin
+    csr_tlbehi[`CSR_TLBEHI_VPPN] <= wb_pc[31:13];  // 错误
+end
+\end{lstlisting}
+
+会导致问题：Load/Store指令访存发生TLB例外时，出错地址应是访存的目标虚拟地址（ALU计算的\texttt{base+offset}），而非指令本身的PC。在EX级发生访存地址例外时，流水线会将访存地址\texttt{data\_vaddr}通过CSR写通道的\texttt{csr\_wvalue}信号传递，最终在CSR模块中该值存为\texttt{badv\_wdata}
+
+于是做修改：
+
+\begin{lstlisting}[language=Verilog]
+// BADV寄存器更新
+always @(posedge clk) begin
+    if (badv_ex)
+        csr_badv <= badv_wdata;  // 使用badv_wdata
+    else if (csr_we && badv_wsel)
+        csr_badv <= badv_wdata;
+end
+
+// TLBEHI.VPPN更新
+else if (badv_ex) begin
+    // 使用badv_wdata的高19位作为VPPN
+    csr_tlbehi[`CSR_TLBEHI_VPPN] <= badv_wdata[31:13];
+end
+\end{lstlisting}
+
+这样的做法确保访存指令TLB例外时，BADV/TLBEHI记录访存的目标地址；取指TLB例外时，BADV/TLBEHI记录取指的PC地址
+
+\subsubsection{INVTLB指令未检查操作码有效性导致非法指令未触发例外}
+
+在运行TLB相关测试时，发现当INVTLB指令的操作码（\texttt{inst[4:0]}）为非法值时，处理器未触发指令不存在例外（INE），而是将其作为合法的INVTLB指令执行。根据手册，INVTLB指令仅支持操作码0、1、2、4、5、6，其他值应触发INE例外
+
+原有译码逻辑仅检查指令格式：
+
+\begin{lstlisting}[language=Verilog]
+assign inst_invtlb = ~ex_valid_r & op_31_26_d[6'h01] 
+                   & op_25_22_d[4'h9] 
+                   & op_21_20_d[2'h0] 
+                   & op_19_15_d[5'h13];
+\end{lstlisting}
+
+会导致问题：当遇到操作码为3、7-31等非法值的INVTLB指令时，处理器将其视为合法指令执行（通常执行空操作或未定义行为），而golden trace中此类指令会触发INE例外并跳转到例外处理程序，导致trace不匹配
+
+于是，在译码阶段增加操作码有效性检查：
+
+\begin{lstlisting}[language=Verilog]
+assign inst_invtlb_raw = ~ex_valid_r & op_31_26_d[6'h01] 
+                       & op_25_22_d[4'h9] 
+                       & op_21_20_d[2'h0] 
+                       & op_19_15_d[5'h13];
+
+assign invtlb_op_valid = (invtlb_op == 5'h0)
+                       | (invtlb_op == 5'h1)
+                       | (invtlb_op == 5'h2)
+                       | (invtlb_op == 5'h3)
+                       | (invtlb_op == 5'h4)
+                       | (invtlb_op == 5'h5)
+                       | (invtlb_op == 5'h6);
+
+assign inst_invtlb = inst_invtlb_raw & invtlb_op_valid;
+
+wire [4:0] invtlb_op = inst[4:0];  // INVTLB operation code
+\end{lstlisting}
+
+将INVTLB识别分为两步：首先通过\texttt{inst\_invtlb\_raw}识别指令格式，然后通过\texttt{invtlb\_op\_valid}检查操作码是否为合法值（0/1/2/4/5/6），只有两者都满足时才认定为合法的INVTLB指令。操作码非法时，\texttt{inst\_invtlb}为0，该指令无法匹配任何已知指令，触发\texttt{exception\_ine}
+
