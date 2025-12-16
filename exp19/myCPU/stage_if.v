@@ -18,6 +18,9 @@ module stage_if(
     // TLB exception input
     input wire        input_tlb_ex,
     input wire [5:0]  input_tlb_ecode,
+    input wire        input_tlb_found,
+    input wire [3:0]  input_tlb_index,
+    input wire [5:0]  input_tlb_ps,
 
     // exception info
     output wire [5:0]  output_ecode,
@@ -30,6 +33,9 @@ module stage_if(
     output wire [13:0] output_csr_num,
 
     output wire        output_ex_valid,
+    output wire        output_tlb_found,
+    output wire [3:0]  output_tlb_index,
+    output wire [5:0]  output_tlb_ps,
 
     // I/O
     // output wire inst_sram_req,
@@ -80,17 +86,26 @@ module stage_if(
     wire except_adef = (pc[1:0] != 2'b0);
     
     reg tlb_ex_r;
+    reg tlb_found_r;
+    reg [3:0] tlb_index_r;
+    reg [5:0] tlb_ps_r;
     reg [5:0] tlb_ecode_r;
 
     always @(posedge clk) begin
         if (rst) begin
             pc <= 32'h0;
             tlb_ex_r <= 1'b0;
+            tlb_found_r <= 1'b0;
+            tlb_index_r <= 4'h0;
+            tlb_ps_r <= 6'h0;
             tlb_ecode_r <= 6'h0;
         end else if (refreshing) begin
             pc <= input_pc;
             tlb_ex_r <= input_tlb_ex;
             tlb_ecode_r <= input_tlb_ecode;
+            tlb_found_r <= input_tlb_ex ? input_tlb_found : 1'b0;
+            tlb_index_r <= input_tlb_ex ? input_tlb_index : 4'h0;
+            tlb_ps_r <= input_tlb_ex ? input_tlb_ps : 6'h0;
         end
     end
 
@@ -168,6 +183,9 @@ module stage_if(
     assign output_ex_valid = has_exception & validout;
     assign output_ecode = except_adef ? `ECODE_ADEF : tlb_ecode_r;
     assign output_esubcode = except_adef ? `ESUBCODE_ADEF : 9'h0;
+    assign output_tlb_found = tlb_found_r;
+    assign output_tlb_index = tlb_index_r;
+    assign output_tlb_ps = tlb_ps_r;
 
     assign output_is_csr = has_exception;
     assign output_csr_en = has_exception;

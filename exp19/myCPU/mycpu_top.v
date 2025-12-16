@@ -153,6 +153,50 @@ module mycpu_top(
 
     localparam ENTRYPOINT = 32'h1c000000;
 
+    function automatic dmw_plv_allowed;
+        input [31:0] dmw;
+        input [1:0] plv;
+        begin
+            case (plv)
+                2'b00: dmw_plv_allowed = dmw[`CSR_DMW_PLV0];
+                default: dmw_plv_allowed = dmw[`CSR_DMW_PLV3];
+            endcase
+        end
+    endfunction
+
+    function automatic dmw_window_hit;
+        input [31:0] dmw;
+        input [31:0] va;
+        input [1:0] plv;
+        begin
+            dmw_window_hit = (va[31:29] == dmw[`CSR_DMW_VSEG]) && dmw_plv_allowed(dmw, plv);
+        end
+    endfunction
+
+    function automatic [31:0] dmw_pa_calc;
+        input [31:0] dmw;
+        input [31:0] va;
+        begin
+            dmw_pa_calc = {dmw[`CSR_DMW_PSEG], va[28:0]};
+        end
+    endfunction
+
+    function automatic [31:0] tlb_pa_calc;
+        input [19:0] ppn;
+        input [31:0] va;
+        input [5:0]  ps;
+        reg [31:0] base;
+        reg [31:0] mask;
+        begin
+            base = {ppn, 12'b0};
+            if (ps >= 32)
+                mask = 32'hffff_ffff;
+            else
+                mask = (32'h1 << ps) - 1;
+            tlb_pa_calc = (base & ~mask) | (va & mask);
+        end
+    endfunction
+
     always @(posedge clk) begin
         if (rst)
             next_pc <= ENTRYPOINT + 4;
@@ -196,55 +240,97 @@ module mycpu_top(
             addr_sent <= 1'b0;
         end else if (if_refreshing) begin
             addr_sent <= 1'b0;
+        end else if (if_ex_tlb) begin
+            addr_sent <= 1'b1;
         end else if (addr_sending) begin
             addr_sent <= 1'b1;
         end
     end
 
     assign if_validin = addr_sent;
-    assign inst_sram_req = ~addr_sent;
-    
+
     // Instruction fetch address translation
     wire [31:0] inst_vaddr = pc;
     wire [31:0] inst_paddr;
-    
+    wire        if_ex_tlb;
+    wire [5:0]  if_ex_ecode;
+    wire        if_meta_tlb_found;
+    wire [3:0]  if_meta_tlb_index;
+    wire [5:0]  if_meta_tlb_ps;
+
     // Get CSR values for address translation
-    wire        da_mode = u_csr.csr_crmd[`CSR_CRMD_DA];
-    wire        pg_mode = u_csr.csr_crmd[`CSR_CRMD_PG];
-    wire [1:0]  crmd_plv = u_csr.csr_crmd[`CSR_CRMD_PLV];
-    wire [1:0]  crmd_datf = u_csr.csr_crmd[`CSR_CRMD_DATF];
-    
-    // DMW check for instruction fetch
-    wire        dmw0_hit_if = pg_mode & u_csr.csr_dmw0[`CSR_DMW_VSEG] == inst_vaddr[31:29] & 
-                              ((crmd_plv == 2'b00 & u_csr.csr_dmw0[`CSR_DMW_PLV0]) |
-                               (crmd_plv == 2'b11 & u_csr.csr_dmw0[`CSR_DMW_PLV3]));
-    wire        dmw1_hit_if = pg_mode & u_csr.csr_dmw1[`CSR_DMW_VSEG] == inst_vaddr[31:29] & 
-                              ((crmd_plv == 2'b00 & u_csr.csr_dmw1[`CSR_DMW_PLV0]) |
-                               (crmd_plv == 2'b11 & u_csr.csr_dmw1[`CSR_DMW_PLV3]));
-    
-    // TLB exception detection for instruction fetch
-    wire if_tlb_refill = pg_mode & ~dmw0_hit_if & ~dmw1_hit_if & ~s0_found;  // No TLB match
-    wire if_tlb_invalid = pg_mode & ~dmw0_hit_if & ~dmw1_hit_if & s0_found & ~s0_v;  // TLB found but V=0
-    wire if_tlb_plv_invalid = pg_mode & ~dmw0_hit_if & ~dmw1_hit_if & s0_found & s0_v & (s0_plv < crmd_plv);  // PLV check failed
-    
-    wire if_ex_tlb = if_tlb_refill | if_tlb_invalid | if_tlb_plv_invalid;
-    wire [5:0] if_ex_ecode = if_tlb_refill ? `ECODE_TLBR :
-                             if_tlb_invalid ? `ECODE_PIF :
-                             if_tlb_plv_invalid ? `ECODE_PPI :
-                             6'h0;
-    
-    // Physical address generation for instruction fetch
-    assign inst_paddr = da_mode ? inst_vaddr :
-                        dmw0_hit_if ? {u_csr.csr_dmw0[`CSR_DMW_PSEG], inst_vaddr[28:0]} :
-                        dmw1_hit_if ? {u_csr.csr_dmw1[`CSR_DMW_PSEG], inst_vaddr[28:0]} :
-                        s0_found ? {s0_ppn, inst_vaddr[11:0]} :  // TLB mapped
-                        inst_vaddr;  // Will cause TLB refill exception
-    
-    assign inst_sram_addr = inst_paddr;
-    assign inst_sram_wr = 1'b0;
-    assign inst_sram_size = 2'b10; // word
+    wire        da_mode = csr_crmd_value[`CSR_CRMD_DA];
+    wire        pg_mode = csr_crmd_value[`CSR_CRMD_PG];
+    wire [1:0]  crmd_plv = csr_crmd_value[`CSR_CRMD_PLV];
+
+    // Direct mode (DA=1, PG=0) bypasses MMU
+    wire        if_direct_mode  = da_mode & ~pg_mode;
+    wire        if_mapping_mode = pg_mode;
+
+    wire        dmw0_hit_if = if_mapping_mode && dmw_window_hit(csr_dmw0_value, inst_vaddr, crmd_plv);
+    wire        dmw1_hit_if = if_mapping_mode && dmw_window_hit(csr_dmw1_value, inst_vaddr, crmd_plv);
+    wire        dmw2_hit_if = if_mapping_mode && dmw_window_hit(csr_dmw2_value, inst_vaddr, crmd_plv);
+    wire        dmw3_hit_if = if_mapping_mode && dmw_window_hit(csr_dmw3_value, inst_vaddr, crmd_plv);
+
+    reg         if_dmw_hit;
+    reg  [31:0] if_dmw_pa;
+    reg  [1:0]  if_dmw_mat;
+    always @(*) begin
+        if_dmw_hit = 1'b0;
+        if_dmw_pa  = 32'h0;
+        if_dmw_mat = 2'b0;
+        if (if_mapping_mode) begin
+            if (dmw0_hit_if) begin
+                if_dmw_hit = 1'b1;
+                if_dmw_pa  = dmw_pa_calc(csr_dmw0_value, inst_vaddr);
+                if_dmw_mat = csr_dmw0_value[`CSR_DMW_MAT];
+            end else if (dmw1_hit_if) begin
+                if_dmw_hit = 1'b1;
+                if_dmw_pa  = dmw_pa_calc(csr_dmw1_value, inst_vaddr);
+                if_dmw_mat = csr_dmw1_value[`CSR_DMW_MAT];
+            end else if (dmw2_hit_if) begin
+                if_dmw_hit = 1'b1;
+                if_dmw_pa  = dmw_pa_calc(csr_dmw2_value, inst_vaddr);
+                if_dmw_mat = csr_dmw2_value[`CSR_DMW_MAT];
+            end else if (dmw3_hit_if) begin
+                if_dmw_hit = 1'b1;
+                if_dmw_pa  = dmw_pa_calc(csr_dmw3_value, inst_vaddr);
+                if_dmw_mat = csr_dmw3_value[`CSR_DMW_MAT];
+            end
+        end
+    end
+
+    wire        if_use_tlb = if_mapping_mode && ~if_dmw_hit;
+    wire        if_tlb_refill = if_use_tlb && ~s0_found;
+    wire        if_tlb_invalid = if_use_tlb && s0_found && ~s0_v;
+    wire        if_tlb_plv_invalid = if_use_tlb && s0_found && s0_v && (crmd_plv > s0_plv);
+    wire        if_tlb_ok = if_use_tlb && s0_found && s0_v && (crmd_plv <= s0_plv);
+
+    assign if_ex_tlb = if_tlb_refill | if_tlb_invalid | if_tlb_plv_invalid;
+    assign if_ex_ecode = if_tlb_refill ? `ECODE_TLBR :
+                         if_tlb_invalid ? `ECODE_PIF :
+                         if_tlb_plv_invalid ? `ECODE_PPI :
+                         6'h0;
+
+    wire [31:0] if_tlb_pa = tlb_pa_calc(s0_ppn, inst_vaddr, s0_ps);
+    assign inst_paddr = if_direct_mode ? inst_vaddr :
+                        if_dmw_hit     ? if_dmw_pa  :
+                        if_tlb_pa;
+
+    assign if_meta_tlb_found = if_ex_tlb ? s0_found : 1'b0;
+    assign if_meta_tlb_index = if_ex_tlb ? s0_index : 4'h0;
+    assign if_meta_tlb_ps    = if_ex_tlb ? s0_ps    : 6'h0;
+
+    assign inst_sram_req   = ~addr_sent & ~if_ex_tlb;
+    assign inst_sram_addr  = inst_paddr;
+    assign inst_sram_wr    = 1'b0;
+    assign inst_sram_size  = 2'b10; // word
     assign inst_sram_wstrb = 4'b0;
     assign inst_sram_wdata = 32'h0;
+
+    wire        if_tlb_found_out;
+    wire [3:0]  if_tlb_index_out;
+    wire [5:0]  if_tlb_ps_out;
 
     stage_if u_stage_if(
         .clk(clk),
@@ -259,6 +345,9 @@ module mycpu_top(
         .input_pc(pc),
         .input_tlb_ex(if_ex_tlb),
         .input_tlb_ecode(if_ex_ecode),
+    .input_tlb_found(if_meta_tlb_found),
+    .input_tlb_index(if_meta_tlb_index),
+    .input_tlb_ps(if_meta_tlb_ps),
         .output_pc(if_pc),
         .output_inst(if_inst),
 
@@ -271,6 +360,9 @@ module mycpu_top(
         .output_csr_wmask(if_csr_wmask),
         .output_csr_wvalue(if_csr_wvalue),
         .output_ex_valid(if_ex_valid),
+        .output_tlb_found(if_tlb_found_out),
+        .output_tlb_index(if_tlb_index_out),
+        .output_tlb_ps(if_tlb_ps_out),
 
         // .inst_sram_req(inst_sram_req),
         // .inst_sram_wr(inst_sram_wr),
@@ -313,8 +405,18 @@ module mycpu_top(
     wire [ 8:0]  wb_esubcode;
     wire         ertn_flush;
     wire [31:0]  ex_entry;
+    wire [31:0]  tlbrentry_value;
     wire [31:0]  ex_ra;
     wire [12:0]  intr_stat;
+    wire [31:0]  csr_crmd_value;
+    wire [31:0]  csr_asid_value;
+    wire [31:0]  csr_tlbehi_value;
+    wire [31:0]  csr_tlbidx_value;
+    wire [31:0]  csr_dmw0_value;
+    wire [31:0]  csr_dmw1_value;
+    wire [31:0]  csr_dmw2_value;
+    wire [31:0]  csr_dmw3_value;
+    wire         wb_mmu_ex;
 
     // TLB instruction control signals
     wire        tlbrd_en;
@@ -341,6 +443,19 @@ module mycpu_top(
         .intr_stat  (intr_stat),
         .ex_entry   (ex_entry),
         .ex_ra      (ex_ra),
+        .crmd_value (csr_crmd_value),
+        .asid_value (csr_asid_value),
+        .tlbehi_value (csr_tlbehi_value),
+        .tlbidx_value (csr_tlbidx_value),
+        .tlbrentry_value (tlbrentry_value),
+        .dmw0_value (csr_dmw0_value),
+        .dmw1_value (csr_dmw1_value),
+        .dmw2_value (csr_dmw2_value),
+        .dmw3_value (csr_dmw3_value),
+        .wb_mmu_ex  (wb_mmu_ex),
+        .wb_tlb_found (wb_mmu_tlb_found),
+        .wb_tlb_index (wb_mmu_tlb_index),
+        .wb_tlb_ps    (wb_mmu_tlb_ps),
 
         // TLB interface
         .tlbrd_en   (tlbrd_en),
@@ -537,7 +652,7 @@ module mycpu_top(
     // TLB search port 0 connections (instruction fetch)
     assign s0_vppn = inst_vaddr[31:13];
     assign s0_va_bit12 = inst_vaddr[12];
-    assign s0_asid = u_csr.csr_asid[`CSR_ASID_ASID];
+    assign s0_asid = csr_asid_value[`CSR_ASID_ASID];
 
     // TLB search port 1 connections (load/store) - connected from EX stage
     wire [31:0] data_vaddr;  // Virtual address from EX stage
@@ -545,39 +660,72 @@ module mycpu_top(
     wire        ex_inst_tlbsrch;  // TLBSRCH instruction in EX stage
     
     // For TLBSRCH, use CSR.TLBEHI; for load/store, use data_vaddr
-    assign s1_vppn = ex_inst_tlbsrch ? u_csr.csr_tlbehi[`CSR_TLBEHI_VPPN] : data_vaddr[31:13];
+    assign s1_vppn = ex_inst_tlbsrch ? csr_tlbehi_value[`CSR_TLBEHI_VPPN] : data_vaddr[31:13];
     assign s1_va_bit12 = ex_inst_tlbsrch ? 1'b0 : data_vaddr[12];
-    assign s1_asid = u_csr.csr_asid[`CSR_ASID_ASID];
+    assign s1_asid = csr_asid_value[`CSR_ASID_ASID];
     
-    // DMW check for load/store
-    wire        dmw0_hit_ls = pg_mode & u_csr.csr_dmw0[`CSR_DMW_VSEG] == data_vaddr[31:29] & 
-                              ((crmd_plv == 2'b00 & u_csr.csr_dmw0[`CSR_DMW_PLV0]) |
-                               (crmd_plv == 2'b11 & u_csr.csr_dmw0[`CSR_DMW_PLV3]));
-    wire        dmw1_hit_ls = pg_mode & u_csr.csr_dmw1[`CSR_DMW_VSEG] == data_vaddr[31:29] & 
-                              ((crmd_plv == 2'b00 & u_csr.csr_dmw1[`CSR_DMW_PLV0]) |
-                               (crmd_plv == 2'b11 & u_csr.csr_dmw1[`CSR_DMW_PLV3]));
-    
-    // TLB exception detection for load/store
-    wire ls_tlb_refill = pg_mode & ~dmw0_hit_ls & ~dmw1_hit_ls & ~s1_found;  // No TLB match
-    wire ls_tlb_invalid = pg_mode & ~dmw0_hit_ls & ~dmw1_hit_ls & s1_found & ~s1_v;  // TLB found but V=0
-    wire ls_tlb_plv_invalid = pg_mode & ~dmw0_hit_ls & ~dmw1_hit_ls & s1_found & s1_v & (s1_plv < crmd_plv);  // PLV check failed
-    wire ls_tlb_modify = pg_mode & ~dmw0_hit_ls & ~dmw1_hit_ls & s1_found & s1_v & (s1_plv >= crmd_plv) & ex_mem_write & ~s1_d;  // Store with D=0
-    
-    wire ls_ex_tlb = ls_tlb_refill | ls_tlb_invalid | ls_tlb_plv_invalid | ls_tlb_modify;
-    wire is_store_op = ex_mem_write;
-    wire is_load_op = ex_mem_read;
-    wire [5:0] ls_ex_ecode = ls_tlb_refill ? `ECODE_TLBR :
-                             ls_tlb_invalid ? (is_store_op ? `ECODE_PIS : `ECODE_PIL) :
-                             ls_tlb_modify ? `ECODE_PME :
-                             ls_tlb_plv_invalid ? `ECODE_PPI :
-                             6'h0;
-    
-    // Physical address generation for load/store
-    assign data_paddr = da_mode ? data_vaddr :
-                        dmw0_hit_ls ? {u_csr.csr_dmw0[`CSR_DMW_PSEG], data_vaddr[28:0]} :
-                        dmw1_hit_ls ? {u_csr.csr_dmw1[`CSR_DMW_PSEG], data_vaddr[28:0]} :
-                        s1_found ? {s1_ppn, data_vaddr[11:0]} :  // TLB mapped
-                        data_vaddr;  // Will cause TLB refill exception
+    // Load/Store address translation
+    wire        data_direct_mode  = da_mode & ~pg_mode;
+    wire        data_mapping_mode = pg_mode;
+    wire        data_access_req   = (ex_mem_read | ex_mem_write) & ~ex_inst_tlbsrch;
+
+    wire        dmw0_hit_ls = data_mapping_mode && data_access_req && dmw_window_hit(csr_dmw0_value, data_vaddr, crmd_plv);
+    wire        dmw1_hit_ls = data_mapping_mode && data_access_req && dmw_window_hit(csr_dmw1_value, data_vaddr, crmd_plv);
+    wire        dmw2_hit_ls = data_mapping_mode && data_access_req && dmw_window_hit(csr_dmw2_value, data_vaddr, crmd_plv);
+    wire        dmw3_hit_ls = data_mapping_mode && data_access_req && dmw_window_hit(csr_dmw3_value, data_vaddr, crmd_plv);
+
+    reg         data_dmw_hit;
+    reg  [31:0] data_dmw_pa;
+    reg  [1:0]  data_dmw_mat;
+    always @(*) begin
+        data_dmw_hit = 1'b0;
+        data_dmw_pa  = 32'h0;
+        data_dmw_mat = 2'b0;
+        if (data_mapping_mode && data_access_req) begin
+            if (dmw0_hit_ls) begin
+                data_dmw_hit = 1'b1;
+                data_dmw_pa  = dmw_pa_calc(csr_dmw0_value, data_vaddr);
+                data_dmw_mat = csr_dmw0_value[`CSR_DMW_MAT];
+            end else if (dmw1_hit_ls) begin
+                data_dmw_hit = 1'b1;
+                data_dmw_pa  = dmw_pa_calc(csr_dmw1_value, data_vaddr);
+                data_dmw_mat = csr_dmw1_value[`CSR_DMW_MAT];
+            end else if (dmw2_hit_ls) begin
+                data_dmw_hit = 1'b1;
+                data_dmw_pa  = dmw_pa_calc(csr_dmw2_value, data_vaddr);
+                data_dmw_mat = csr_dmw2_value[`CSR_DMW_MAT];
+            end else if (dmw3_hit_ls) begin
+                data_dmw_hit = 1'b1;
+                data_dmw_pa  = dmw_pa_calc(csr_dmw3_value, data_vaddr);
+                data_dmw_mat = csr_dmw3_value[`CSR_DMW_MAT];
+            end
+        end
+    end
+
+    wire        data_use_tlb = data_mapping_mode && data_access_req && ~data_dmw_hit;
+    wire        data_tlb_refill = data_use_tlb && ~s1_found;
+    wire        data_tlb_invalid = data_use_tlb && s1_found && ~s1_v;
+    wire        data_plv_ok = (crmd_plv <= s1_plv);
+    wire        data_plv_invalid = data_use_tlb && s1_found && s1_v && ~data_plv_ok;
+    wire        data_dirty_invalid = data_use_tlb && s1_found && s1_v && data_plv_ok && ex_mem_write && ~s1_d;
+
+    wire        data_mmu_ex = data_tlb_refill | data_tlb_invalid | data_plv_invalid | data_dirty_invalid;
+    wire [5:0]  data_mmu_ecode = data_tlb_refill ? `ECODE_TLBR :
+                                 data_tlb_invalid ? (ex_mem_write ? `ECODE_PIS : `ECODE_PIL) :
+                                 data_dirty_invalid ? `ECODE_PME :
+                                 data_plv_invalid ? `ECODE_PPI :
+                                 6'h0;
+
+    wire [31:0] data_tlb_pa = tlb_pa_calc(s1_ppn, data_vaddr, s1_ps);
+    assign data_paddr = data_direct_mode ? data_vaddr :
+                        data_dmw_hit   ? data_dmw_pa :
+                        data_tlb_pa;
+
+    wire        ls_ex_tlb = data_mmu_ex;
+    wire [5:0]  ls_ex_ecode = data_mmu_ecode;
+    wire        data_meta_tlb_found = data_mmu_ex ? s1_found : 1'b0;
+    wire [3:0]  data_meta_tlb_index = data_mmu_ex ? s1_index : 4'h0;
+    wire [5:0]  data_meta_tlb_ps    = data_mmu_ex ? s1_ps    : 6'h0;
 
     // INVTLB control
     assign invtlb_valid = wb_inst_invtlb;
@@ -749,6 +897,10 @@ module mycpu_top(
     // br_stall: 转移指令计算未完成，阻塞取指
     wire        br_stall;
 
+    wire        id_tlb_found_out;
+    wire [3:0]  id_tlb_index_out;
+    wire [5:0]  id_tlb_ps_out;
+
     stage_id u_stage_id(
         .clk(clk),
         .rst(rst),
@@ -787,6 +939,9 @@ module mycpu_top(
         .input_ex_valid(if_ex_valid),
         .input_ecode(if_ecode),
         .input_esubcode(if_esubcode),
+        .input_tlb_found(if_tlb_found_out),
+        .input_tlb_index(if_tlb_index_out),
+        .input_tlb_ps(if_tlb_ps_out),
 
         .input_is_csr(if_is_csr),
         .input_csr_en(if_csr_en),
@@ -820,8 +975,15 @@ module mycpu_top(
 
         .output_ex_valid(id_ex_valid),
         .output_ecode(id_ecode),
-        .output_esubcode(id_esubcode)
+        .output_esubcode(id_esubcode),
+        .output_tlb_found(id_tlb_found_out),
+        .output_tlb_index(id_tlb_index_out),
+        .output_tlb_ps(id_tlb_ps_out)
     );
+
+    wire        ex_tlb_found_out;
+    wire [3:0]  ex_tlb_index_out;
+    wire [5:0]  ex_tlb_ps_out;
 
     stage_ex u_stage_ex(
         .clk(clk),
@@ -858,6 +1020,12 @@ module mycpu_top(
         .input_ex_valid(id_ex_valid),
         .input_ecode(id_ecode),
         .input_esubcode(id_esubcode),
+        .input_tlb_found_prev(id_tlb_found_out),
+        .input_tlb_index_prev(id_tlb_index_out),
+        .input_tlb_ps_prev(id_tlb_ps_out),
+        .output_tlb_found(ex_tlb_found_out),
+        .output_tlb_index(ex_tlb_index_out),
+        .output_tlb_ps(ex_tlb_ps_out),
         .output_ex_valid(ex_ex_valid),
         .output_ecode(ex_ecode),
         .output_esubcode(ex_esubcode),
@@ -925,8 +1093,15 @@ module mycpu_top(
         
         // TLB exception inputs
         .input_tlb_ex(ls_ex_tlb),
-        .input_tlb_ecode(ls_ex_ecode)
+        .input_tlb_ecode(ls_ex_ecode),
+        .input_tlb_found_cur(data_meta_tlb_found),
+        .input_tlb_index_cur(data_meta_tlb_index),
+        .input_tlb_ps_cur(data_meta_tlb_ps)
     );
+
+    wire        mem_tlb_found_out;
+    wire [3:0]  mem_tlb_index_out;
+    wire [5:0]  mem_tlb_ps_out;
 
     stage_mem u_stage_mem(
         .clk(clk),
@@ -968,9 +1143,15 @@ module mycpu_top(
         .input_ex_valid(ex_ex_valid),
         .input_ecode(ex_ecode),
         .input_esubcode(ex_esubcode),
+        .input_tlb_found(ex_tlb_found_out),
+        .input_tlb_index(ex_tlb_index_out),
+        .input_tlb_ps(ex_tlb_ps_out),
         .output_ex_valid(mem_ex_valid),
         .output_ecode(mem_ecode),
         .output_esubcode(mem_esubcode),
+        .output_tlb_found(mem_tlb_found_out),
+        .output_tlb_index(mem_tlb_index_out),
+        .output_tlb_ps(mem_tlb_ps_out),
 
         .input_is_ertn(ex_is_ertn),
         .output_is_ertn(mem_is_ertn),
@@ -993,7 +1174,6 @@ module mycpu_top(
         .output_invtlb_asid(mem_invtlb_asid),
         .output_invtlb_vaddr(mem_invtlb_vaddr),
         
-        // TLBSRCH result
         .input_tlbsrch_found(u_stage_ex.output_tlbsrch_found),
         .input_tlbsrch_index(u_stage_ex.output_tlbsrch_index),
         .output_tlbsrch_found(),
@@ -1013,6 +1193,10 @@ module mycpu_top(
     wire [ 4:0] wb_rf_waddr;
     wire [31:0] wb_rf_wdata;
     wire [31:0] wb_pc;
+
+    wire        wb_mmu_tlb_found;
+    wire [3:0]  wb_mmu_tlb_index;
+    wire [5:0]  wb_mmu_tlb_ps;
 
     stage_wb u_stage_wb(
         .clk(clk),
@@ -1039,6 +1223,9 @@ module mycpu_top(
         .input_ex_valid(mem_ex_valid),
         .input_ecode(mem_ecode),
         .input_esubcode(mem_esubcode),
+        .input_tlb_found(mem_tlb_found_out),
+        .input_tlb_index(mem_tlb_index_out),
+        .input_tlb_ps(mem_tlb_ps_out),
         
         // TLB instructions
         .input_inst_tlbsrch(u_stage_mem.output_inst_tlbsrch),
@@ -1073,6 +1260,10 @@ module mycpu_top(
         .wb_ex_valid(wb_ex_valid),
         .wb_ecode(wb_ecode),
         .wb_esubcode(wb_esubcode),
+        .wb_mmu_ex(wb_mmu_ex),
+        .wb_mmu_tlb_found(wb_mmu_tlb_found),
+        .wb_mmu_tlb_index(wb_mmu_tlb_index),
+        .wb_mmu_tlb_ps(wb_mmu_tlb_ps),
         
         // TLB instruction outputs
         .wb_inst_tlbsrch(wb_inst_tlbsrch),

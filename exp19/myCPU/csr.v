@@ -69,6 +69,23 @@ module csr(
     output wire         w_d1,
     output wire         w_v1,
 
+    // Exposed CSR state for MMU usage
+    output wire [31:0]  crmd_value,
+    output wire [31:0]  asid_value,
+    output wire [31:0]  tlbehi_value,
+    output wire [31:0]  tlbidx_value,
+    output wire [31:0]  tlbrentry_value,
+    output wire [31:0]  dmw0_value,
+    output wire [31:0]  dmw1_value,
+    output wire [31:0]  dmw2_value,
+    output wire [31:0]  dmw3_value,
+
+    // Exception feedback for automatic CSR updates
+    input  wire         wb_mmu_ex,
+    input  wire         wb_tlb_found,
+    input  wire [ 3:0]  wb_tlb_index,
+    input  wire [ 5:0]  wb_tlb_ps,
+
     // TLB read index (for TLBRD)
     output wire [ 3:0]  r_index
 );
@@ -95,6 +112,8 @@ module csr(
     reg [31:0]  csr_tlbrentry;
     reg [31:0]  csr_dmw0;
     reg [31:0]  csr_dmw1;
+    reg [31:0]  csr_dmw2;
+    reg [31:0]  csr_dmw3;
 
     // In principle, these signal should from externel inputs, while in lab,
     // we simulate it by setting fixed value.
@@ -403,6 +422,11 @@ module csr(
             csr_tlbidx[`CSR_TLBIDX_PS] <= r_e ? r_ps : 6'b0;
             csr_tlbidx[`CSR_TLBIDX_NE] <= ~r_e;
         end
+        else if (wb_ex && wb_mmu_ex) begin
+            csr_tlbidx[`CSR_TLBIDX_INDEX] <= wb_tlb_index;
+            csr_tlbidx[`CSR_TLBIDX_PS]    <= wb_tlb_found ? wb_tlb_ps : 6'b0;
+            csr_tlbidx[`CSR_TLBIDX_NE]    <= ~wb_tlb_found;
+        end
         else if (csr_we && tlbidx_wsel) begin
             csr_tlbidx[`CSR_TLBIDX_INDEX] <= tlbidx_wdata[`CSR_TLBIDX_INDEX];
             csr_tlbidx[`CSR_TLBIDX_PS] <= tlbidx_wdata[`CSR_TLBIDX_PS];
@@ -621,6 +645,60 @@ module csr(
         end
     end
 
+    // DMW2 fields
+    wire       dmw2_rsel  = csr_rnum == `CSR_DMW2;
+    wire       dmw2_wsel  = csr_wnum == `CSR_DMW2;
+    wire [31:0] dmw2_wmask = dmw2_wsel ? csr_wmask : 32'b0;
+    wire [31:0] dmw2_wdata = dmw2_wmask & csr_wvalue | ~dmw2_wmask & csr_dmw2;
+
+    always @(posedge clk) begin
+        csr_dmw2[`CSR_DMW_ZERO1] <= 2'b0;
+        csr_dmw2[`CSR_DMW_ZERO2] <= 19'b0;
+        csr_dmw2[`CSR_DMW_ZERO3] <= 1'b0;
+
+        if (rst) begin
+            csr_dmw2[`CSR_DMW_PLV0] <= 1'b0;
+            csr_dmw2[`CSR_DMW_PLV3] <= 1'b0;
+            csr_dmw2[`CSR_DMW_MAT]  <= 2'b0;
+            csr_dmw2[`CSR_DMW_PSEG] <= 3'b0;
+            csr_dmw2[`CSR_DMW_VSEG] <= 3'b0;
+        end
+        else if (csr_we && dmw2_wsel) begin
+            csr_dmw2[`CSR_DMW_PLV0] <= dmw2_wdata[`CSR_DMW_PLV0];
+            csr_dmw2[`CSR_DMW_PLV3] <= dmw2_wdata[`CSR_DMW_PLV3];
+            csr_dmw2[`CSR_DMW_MAT]  <= dmw2_wdata[`CSR_DMW_MAT];
+            csr_dmw2[`CSR_DMW_PSEG] <= dmw2_wdata[`CSR_DMW_PSEG];
+            csr_dmw2[`CSR_DMW_VSEG] <= dmw2_wdata[`CSR_DMW_VSEG];
+        end
+    end
+
+    // DMW3 fields
+    wire       dmw3_rsel  = csr_rnum == `CSR_DMW3;
+    wire       dmw3_wsel  = csr_wnum == `CSR_DMW3;
+    wire [31:0] dmw3_wmask = dmw3_wsel ? csr_wmask : 32'b0;
+    wire [31:0] dmw3_wdata = dmw3_wmask & csr_wvalue | ~dmw3_wmask & csr_dmw3;
+
+    always @(posedge clk) begin
+        csr_dmw3[`CSR_DMW_ZERO1] <= 2'b0;
+        csr_dmw3[`CSR_DMW_ZERO2] <= 19'b0;
+        csr_dmw3[`CSR_DMW_ZERO3] <= 1'b0;
+
+        if (rst) begin
+            csr_dmw3[`CSR_DMW_PLV0] <= 1'b0;
+            csr_dmw3[`CSR_DMW_PLV3] <= 1'b0;
+            csr_dmw3[`CSR_DMW_MAT]  <= 2'b0;
+            csr_dmw3[`CSR_DMW_PSEG] <= 3'b0;
+            csr_dmw3[`CSR_DMW_VSEG] <= 3'b0;
+        end
+        else if (csr_we && dmw3_wsel) begin
+            csr_dmw3[`CSR_DMW_PLV0] <= dmw3_wdata[`CSR_DMW_PLV0];
+            csr_dmw3[`CSR_DMW_PLV3] <= dmw3_wdata[`CSR_DMW_PLV3];
+            csr_dmw3[`CSR_DMW_MAT]  <= dmw3_wdata[`CSR_DMW_MAT];
+            csr_dmw3[`CSR_DMW_PSEG] <= dmw3_wdata[`CSR_DMW_PSEG];
+            csr_dmw3[`CSR_DMW_VSEG] <= dmw3_wdata[`CSR_DMW_VSEG];
+        end
+    end
+
     // CSR read
     assign csr_rvalue = {32{crmd_rsel}}   & csr_crmd
                       | {32{prmd_rsel}}   & csr_prmd
@@ -642,6 +720,8 @@ module csr(
                       | {32{tlbrentry_rsel}}  & csr_tlbrentry
                       | {32{dmw0_rsel}}       & csr_dmw0
                       | {32{dmw1_rsel}}       & csr_dmw1
+                      | {32{dmw2_rsel}}       & csr_dmw2
+                      | {32{dmw3_rsel}}       & csr_dmw3
                       ;
 
     assign intr_stat = {13{csr_crmd[`CSR_CRMD_IE]}}
@@ -669,5 +749,16 @@ module csr(
 
     // TLB read index (for TLBRD)
     assign r_index = csr_tlbidx[`CSR_TLBIDX_INDEX];
+
+    // Exposed CSR state
+    assign crmd_value      = csr_crmd;
+    assign asid_value      = csr_asid;
+    assign tlbehi_value    = csr_tlbehi;
+    assign tlbidx_value    = csr_tlbidx;
+    assign tlbrentry_value = csr_tlbrentry;
+    assign dmw0_value      = csr_dmw0;
+    assign dmw1_value      = csr_dmw1;
+    assign dmw2_value      = csr_dmw2;
+    assign dmw3_value      = csr_dmw3;
 
 endmodule

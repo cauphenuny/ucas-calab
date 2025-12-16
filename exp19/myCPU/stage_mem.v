@@ -35,9 +35,15 @@ module stage_mem(
     input  wire        input_ex_valid,
     input  wire [ 5:0] input_ecode,
     input  wire [ 8:0] input_esubcode,
+    input  wire        input_tlb_found,
+    input  wire [ 3:0] input_tlb_index,
+    input  wire [ 5:0] input_tlb_ps,
     output wire        output_ex_valid,
     output wire [ 5:0] output_ecode,
     output wire [ 8:0] output_esubcode,
+    output wire        output_tlb_found,
+    output wire [ 3:0] output_tlb_index,
+    output wire [ 5:0] output_tlb_ps,
 
     // CSR bundle
     input  wire        input_csr_en,
@@ -169,22 +175,34 @@ module stage_mem(
     reg        ex_valid_r;
     reg [5:0]  ecode_r;
     reg [8:0]  esubcode_r;
+    reg        tlb_found_r;
+    reg [3:0]  tlb_index_r;
+    reg [5:0]  tlb_ps_r;
 
     always @(posedge clk) begin
         if (rst) begin
             ex_valid_r <= 1'b0;
             ecode_r    <= 6'h0;
             esubcode_r <= 9'h0;
+            tlb_found_r <= 1'b0;
+            tlb_index_r <= 4'h0;
+            tlb_ps_r    <= 6'h0;
         end else if (pipe.refreshing) begin
             ex_valid_r <= input_ex_valid;
             ecode_r    <= input_ecode;
             esubcode_r <= input_esubcode;
+            tlb_found_r <= input_tlb_found;
+            tlb_index_r <= input_tlb_index;
+            tlb_ps_r    <= input_tlb_ps;
         end
     end
 
     assign output_ex_valid  = ex_valid_r && valid;
     assign output_ecode     = ecode_r;
     assign output_esubcode  = esubcode_r;
+    assign output_tlb_found = tlb_found_r;
+    assign output_tlb_index = tlb_index_r;
+    assign output_tlb_ps    = tlb_ps_r;
 
     assign have_exception = ex_valid_r;
 

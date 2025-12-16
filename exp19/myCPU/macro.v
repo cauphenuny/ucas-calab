@@ -21,6 +21,8 @@
 `define CSR_TLBRENTRY   14'h088 // TLB Refill Exception Entry
 `define CSR_DMW0        14'h180 // Direct Mapping Window 0
 `define CSR_DMW1        14'h181 // Direct Mapping Window 1
+`define CSR_DMW2        14'h182 // Direct Mapping Window 2
+`define CSR_DMW3        14'h183 // Direct Mapping Window 3
 
 // CSR fields
 `define CSR_CRMD_PLV    1:0

@@ -46,9 +46,15 @@ module stage_ex(
     input  wire        input_ex_valid,
     input  wire [ 5:0] input_ecode,
     input  wire [ 8:0] input_esubcode,
+    input  wire        input_tlb_found_prev,
+    input  wire [ 3:0] input_tlb_index_prev,
+    input  wire [ 5:0] input_tlb_ps_prev,
     output wire        output_ex_valid,
     output wire [ 5:0] output_ecode,
     output wire [ 8:0] output_esubcode,
+    output wire        output_tlb_found,
+    output wire [ 3:0] output_tlb_index,
+    output wire [ 5:0] output_tlb_ps,
 
     // CSR bundle
     input  wire        input_csr_en,
@@ -115,7 +121,10 @@ module stage_ex(
     
     // TLB exception inputs
     input  wire        input_tlb_ex,
-    input  wire [ 5:0] input_tlb_ecode
+    input  wire [ 5:0] input_tlb_ecode,
+    input  wire        input_tlb_found_cur,
+    input  wire [ 3:0] input_tlb_index_cur,
+    input  wire [ 5:0] input_tlb_ps_cur
 );
 
     wire valid, readygo;
@@ -357,16 +366,25 @@ module stage_ex(
     reg        ex_valid_r;
     reg [5:0]  ecode_r;
     reg [8:0]  esubcode_r;
+    reg        prev_tlb_found_r;
+    reg [3:0]  prev_tlb_index_r;
+    reg [5:0]  prev_tlb_ps_r;
 
     always @(posedge clk) begin
         if (rst) begin
             ex_valid_r <= 1'b0;
             ecode_r    <= 6'h0;
             esubcode_r <= 9'h0;
+            prev_tlb_found_r <= 1'b0;
+            prev_tlb_index_r <= 4'h0;
+            prev_tlb_ps_r    <= 6'h0;
         end else if (pipe.refreshing) begin
             ex_valid_r <= input_ex_valid;
             ecode_r    <= input_ecode;
             esubcode_r <= input_esubcode;
+            prev_tlb_found_r <= input_tlb_found_prev;
+            prev_tlb_index_r <= input_tlb_index_prev;
+            prev_tlb_ps_r    <= input_tlb_ps_prev;
         end
     end
 
@@ -378,11 +396,18 @@ module stage_ex(
     assign ecode = ex_ale ? `ECODE_ALE : input_tlb_ecode;
     assign esubcode = 9'h0;
 
+    wire        curr_tlb_found = input_tlb_ex ? input_tlb_found_cur : 1'b0;
+    wire [3:0]  curr_tlb_index = input_tlb_ex ? input_tlb_index_cur : 4'h0;
+    wire [5:0]  curr_tlb_ps    = input_tlb_ex ? input_tlb_ps_cur : 6'h0;
+
     assign output_ex_valid  = (ex_valid_r | ex_valid) & valid;
     assign output_ecode     = {6{ex_valid_r}} & ecode_r
                             | {6{ex_valid}} & ecode;
     assign output_esubcode  = {9{ex_valid_r}} & esubcode_r
                             | {9{ex_valid}} & esubcode;
+    assign output_tlb_found = ex_valid ? curr_tlb_found : prev_tlb_found_r;
+    assign output_tlb_index = ex_valid ? curr_tlb_index : prev_tlb_index_r;
+    assign output_tlb_ps    = ex_valid ? curr_tlb_ps    : prev_tlb_ps_r;
 
 /**************** CSR bundle & ERTN ****************/
     reg        csr_en_r;

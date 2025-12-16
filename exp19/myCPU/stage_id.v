@@ -36,9 +36,15 @@ module stage_id(
     input  wire        input_ex_valid, // ADEF exception from IF
     input  wire [ 5:0] input_ecode,
     input  wire [ 8:0] input_esubcode,
+    input  wire        input_tlb_found,
+    input  wire [ 3:0] input_tlb_index,
+    input  wire [ 5:0] input_tlb_ps,
     output wire        output_ex_valid,
     output wire [ 5:0] output_ecode,
     output wire [ 8:0] output_esubcode,
+    output wire        output_tlb_found,
+    output wire [ 3:0] output_tlb_index,
+    output wire [ 5:0] output_tlb_ps,
 
     // CSR bundle for WB
     input  wire        input_csr_en,
@@ -96,6 +102,9 @@ module stage_id(
     reg ex_valid_r; // exception from previous pipeline stage
     reg [ 5:0] ecode_r;
     reg [ 8:0] esubcode_r;
+    reg        tlb_found_r;
+    reg [ 3:0] tlb_index_r;
+    reg [ 5:0] tlb_ps_r;
     reg        csr_en_r;
     reg [13:0] csr_num_r;
     reg        csr_we_r;
@@ -110,6 +119,9 @@ module stage_id(
             ex_valid_r <= 1'b0;
             ecode_r <= 6'h0;
             esubcode_r <= 9'h0;
+            tlb_found_r <= 1'b0;
+            tlb_index_r <= 4'h0;
+            tlb_ps_r <= 6'h0;
             csr_en_r    <= 1'b0;
             csr_num_r   <= 14'h0;
             csr_we_r    <= 1'b0;
@@ -123,6 +135,9 @@ module stage_id(
             ex_valid_r  <= input_ex_valid;
             ecode_r     <= input_ecode;
             esubcode_r  <= input_esubcode;
+            tlb_found_r <= input_tlb_found;
+            tlb_index_r <= input_tlb_index;
+            tlb_ps_r    <= input_tlb_ps;
 
             is_csr_r    <= input_is_csr;
             csr_en_r    <= input_csr_en;
@@ -552,6 +567,9 @@ module stage_id(
                             | {6{ex_valid_r}} & ecode_r;
     assign output_esubcode  = {9{ex_valid}} & ex_esubcode
                             | {9{ex_valid_r}} & esubcode_r;
+    assign output_tlb_found = ex_valid ? 1'b0 : tlb_found_r;
+    assign output_tlb_index = ex_valid ? 4'h0 : tlb_index_r;
+    assign output_tlb_ps    = ex_valid ? 6'h0 : tlb_ps_r;
     assign output_csr_en    = csr_en | csr_en_r;
     assign output_csr_num   = {14{csr_en}} & csr_num_imm
                             | {14{csr_en_r}} & csr_num_r

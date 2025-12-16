@@ -1,5 +1,7 @@
 `timescale 10ns / 1ps
 
+`include "macro.v"
+
 module stage_wb(
     input  wire clk, rst,
 
@@ -59,6 +61,9 @@ module stage_wb(
     input  wire        input_ex_valid,
     input  wire [ 5:0] input_ecode,
     input  wire [ 8:0] input_esubcode,
+    input  wire        input_tlb_found,
+    input  wire [ 3:0] input_tlb_index,
+    input  wire [ 5:0] input_tlb_ps,
 
     // I/O
     // (interact with RF module)
@@ -75,6 +80,10 @@ module stage_wb(
     output  wire         wb_ex_valid,
     output  wire [ 5:0]  wb_ecode,
     output  wire [ 8:0]  wb_esubcode,
+    output  wire         wb_mmu_ex,
+    output  wire         wb_mmu_tlb_found,
+    output  wire [ 3:0]  wb_mmu_tlb_index,
+    output  wire [ 5:0]  wb_mmu_tlb_ps,
     
     // TLB instruction outputs
     output  wire         wb_inst_tlbsrch,
@@ -109,6 +118,9 @@ module stage_wb(
     reg        ex_valid_r;
     reg [5:0]  ecode_r;
     reg [8:0]  esubcode_r;
+    reg        tlb_found_r;
+    reg [3:0]  tlb_index_r;
+    reg [5:0]  tlb_ps_r;
     reg        csr_en_r;
     reg [13:0] csr_num_r;
     reg        csr_we_r;
@@ -138,6 +150,9 @@ module stage_wb(
             rf_waddr <= 5'h0;
             rf_we <= 1'b0;
             rf_wdata <= 32'h0;
+            tlb_found_r <= 1'b0;
+            tlb_index_r <= 4'h0;
+            tlb_ps_r    <= 6'h0;
             invtlb_asid_r <= 10'b0;
             invtlb_vaddr_r <= 32'h0;
         end else if (pipe.refreshing) begin
@@ -148,6 +163,9 @@ module stage_wb(
             ex_valid_r <= input_ex_valid;
             ecode_r    <= input_ecode;
             esubcode_r <= input_esubcode;
+            tlb_found_r <= input_tlb_found;
+            tlb_index_r <= input_tlb_index;
+            tlb_ps_r    <= input_tlb_ps;
             csr_en_r   <= input_csr_en;
             csr_num_r  <= input_csr_num;
             csr_we_r   <= input_csr_we;
@@ -187,6 +205,18 @@ module stage_wb(
     assign wb_ex_valid  = valid & ex_valid_r;
     assign wb_ecode     = ecode_r;
     assign wb_esubcode  = esubcode_r;
+
+    wire mmu_exception_code = (ecode_r == `ECODE_PIF) ||
+                              (ecode_r == `ECODE_PIL) ||
+                              (ecode_r == `ECODE_PIS) ||
+                              (ecode_r == `ECODE_PPI) ||
+                              (ecode_r == `ECODE_PME) ||
+                              (ecode_r == `ECODE_TLBR);
+
+    assign wb_mmu_ex = wb_ex_valid & mmu_exception_code;
+    assign wb_mmu_tlb_found = tlb_found_r;
+    assign wb_mmu_tlb_index = tlb_index_r;
+    assign wb_mmu_tlb_ps    = tlb_ps_r;
     
     // TLB instruction outputs
     assign wb_inst_tlbsrch = valid & inst_tlbsrch_r;
