@@ -129,8 +129,6 @@ module csr(
 
     always @(posedge clk) begin
         // unused fields
-        csr_crmd[`CSR_CRMD_DATF] <= 2'b0;
-        csr_crmd[`CSR_CRMD_DATM] <= 2'b0;
         csr_crmd[`CSR_CRMD_WE]   <= 1'b0;
         csr_crmd[`CSR_CRMD_ZERO] <= 22'b0;
 
@@ -140,6 +138,8 @@ module csr(
             csr_crmd[`CSR_CRMD_IE]  <= 1'b0;
             csr_crmd[`CSR_CRMD_DA]  <= 1'b1;  // Direct translation mode on reset
             csr_crmd[`CSR_CRMD_PG]  <= 1'b0;  // Mapped mode disabled on reset
+            csr_crmd[`CSR_CRMD_DATF] <= 2'b0;
+            csr_crmd[`CSR_CRMD_DATM] <= 2'b0;
         end
         else if (wb_ex) begin
             csr_crmd[`CSR_CRMD_PLV] <= 2'b0;
@@ -164,6 +164,8 @@ module csr(
             csr_crmd[`CSR_CRMD_IE]  <= crmd_wdata[`CSR_CRMD_IE];
             csr_crmd[`CSR_CRMD_DA]  <= crmd_wdata[`CSR_CRMD_DA];
             csr_crmd[`CSR_CRMD_PG]  <= crmd_wdata[`CSR_CRMD_PG];
+            csr_crmd[`CSR_CRMD_DATF] <= crmd_wdata[`CSR_CRMD_DATF];
+            csr_crmd[`CSR_CRMD_DATM] <= crmd_wdata[`CSR_CRMD_DATM];
         end
     end
 
@@ -220,7 +222,9 @@ module csr(
             csr_eentry[`CSR_EENTRY_VA] <= eentry_wdata[`CSR_EENTRY_VA];
     end
 
-    assign ex_entry = csr_eentry;
+    wire is_tlbr_exception = wb_ex && (wb_ecode == `ECODE_TLBR);
+
+    assign ex_entry = is_tlbr_exception ? csr_tlbrentry : csr_eentry;
 
     // SAVE fields
     wire        save_rsel_i   [0:3];
@@ -421,11 +425,6 @@ module csr(
             // If TLB entry is invalid (r_e=0), PS should be cleared to 0
             csr_tlbidx[`CSR_TLBIDX_PS] <= r_e ? r_ps : 6'b0;
             csr_tlbidx[`CSR_TLBIDX_NE] <= ~r_e;
-        end
-        else if (wb_ex && wb_mmu_ex) begin
-            csr_tlbidx[`CSR_TLBIDX_INDEX] <= wb_tlb_index;
-            csr_tlbidx[`CSR_TLBIDX_PS]    <= wb_tlb_found ? wb_tlb_ps : 6'b0;
-            csr_tlbidx[`CSR_TLBIDX_NE]    <= ~wb_tlb_found;
         end
         else if (csr_we && tlbidx_wsel) begin
             csr_tlbidx[`CSR_TLBIDX_INDEX] <= tlbidx_wdata[`CSR_TLBIDX_INDEX];
