@@ -143,6 +143,9 @@ module stage_if(
     always @(posedge clk) begin
         if (rst) begin
             already_ok <= 1'b0;
+        end else if (refreshing && (input_tlb_ex || except_adef)) begin
+            // No SRAM data needed when we already know this fetch faults
+            already_ok <= 1'b1;
         end else if (refreshing && buffer_valid) begin
             already_ok <= 1'b1;
         end else if (inst_sram_data_ok && (~already_ok || refreshing)) begin
@@ -152,7 +155,8 @@ module stage_if(
         end
     end
 
-    assign readygo = already_ok;
+    // Allow pipeline to advance as soon as we know an exception, without waiting for SRAM data
+    assign readygo = already_ok | input_tlb_ex | tlb_ex_r | except_adef;
 
     // assign inst_sram_addr = pc;
     // assign inst_sram_req = ~except_adef & (state == REQ) & valid;
@@ -177,4 +181,3 @@ module stage_if(
     assign output_csr_wvalue = pc;
 
 endmodule
-
