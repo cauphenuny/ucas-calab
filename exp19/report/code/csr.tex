@@ -3,21 +3,21 @@
 \begin{table}[h]
 \centering
 \caption{TLB相关CSR}
-\begin{tabular}{|c|c|c|c|}
+\begin{tabular}{|c|c|c|}
 \hline
-\textbf{CSR} & \textbf{主要更新源} & \textbf{冲突处理} & \textbf{优先级} \\
+	\textbf{CSR} & \textbf{主要更新源} & \textbf{冲突处理} \\
 \hline
-TLBIDX & CSR写、TLBSRCH、TLBRD & 无(只读部分) & TLBSRCH/TLBRD > CSR写 \\
+TLBIDX & CSR写、TLBSRCH、TLBRD & 无(只读部分) \\
 \hline
-TLBEHI & CSR写、异常、TLBRD & 重取指 & 异常 > CSR写 \\
+TLBEHI & CSR写、异常、TLBRD & 重取指 \\
 \hline
-TLBELO0/1 & CSR写、TLBRD & 无 & CSR写优先 \\
+TLBELO0/1 & CSR写、TLBRD & 无 \\
 \hline
-ASID & CSR写、TLBRD & 重取指 & TLBRD > CSR写 \\
+ASID & CSR写、TLBRD & 重取指 \\
 \hline
-CRMD(DA/PG) & CSR写、异常 & 重取指、特殊处理 & 异常 > CSR写 \\
+CRMD(DA/PG) & CSR写、异常 & 重取指、特殊处理 \\
 \hline
-TLBRENTRY & CSR写 & 无 & - \\
+TLBRENTRY & CSR写 & 无 \\
 \hline
 \end{tabular}
 \end{table}
@@ -72,13 +72,7 @@ end
 assign csr_rdata[`CSR_TLBIDX] = csr_tlbidx;
 \end{lstlisting}
 
-关键点：
-
-\begin{enumerate}
-    \item \textbf{NE位的清零保证}：当读取无效TLB项时（r\_e=0），PS域必须清为0，否则软件会读到错误的页大小信息。
-    
-    \item \textbf{多源更新优先级}：TLBSRCH和TLBRD操作的NE位更新优先级高于CSR写操作，确保查询/读取结果不被软件设置的值覆盖。
-\end{enumerate}
+% 关键点见异常处理章节
 
 \subsubsection{TLBEHI寄存器的实现}
 
@@ -122,13 +116,7 @@ end
 assign csr_rdata[`CSR_TLBEHI] = csr_tlbehi;
 \end{lstlisting}
 
-关键点：
-
-\begin{enumerate}
-    \item \textbf{异常时自动更新}：当发生TLB重填异常或其他地址相关异常时，硬件自动将坏虚地址的高19位写入VPPN。
-    
-    \item \textbf{异常优先于软件写}：异常触发的VPPN更新具有最高优先级，确保异常处理程序能获得正确的坏地址信息。
-\end{enumerate}
+% 关键点见异常处理章节
 
 \subsubsection{TLBELO0和TLBELO1寄存器的实现}
 
@@ -227,13 +215,7 @@ assign tlb_s0_asid = csr_asid[`CSR_ASID_ASID];
 assign csr_rdata[`CSR_ASID] = csr_asid;
 \end{lstlisting}
 
-关键点：
-
-\begin{enumerate}
-    \item \textbf{直接连接TLB}：ASID寄存器的值直接驱动TLB查找模块的ASID输入，确保TLB能获得最新的ASID值进行查找。
-    
-    \item \textbf{重取指冲突}：由于取指和访存都会读取ASID用于TLB查找，而TLBRD可能修改ASID，此时采用重取指机制处理冲突。
-\end{enumerate}
+% 关键点见流水线集成章节
 
 \subsubsection{TLBRENTRY寄存器的实现}
 
@@ -297,90 +279,10 @@ always @(posedge clk) begin
 end
 \end{lstlisting}
 
-关键点：
+% 关键点见异常处理与流水线集成章节
 
-\begin{enumerate}
-    \item \textbf{TLB重填异常处理}：当触发TLB重填异常时，硬件自动将DA置1、PG置0，进入直接地址翻译模式，避免异常处理程序自身再次触发TLB异常。
-    
-    \item \textbf{异常退出恢复}：执行ERTN指令返回TLB重填异常时，恢复到映射地址翻译模式。
-    
-    \item \textbf{重取指冲突}：由于DA/PG直接影响整个系统的地址翻译方式，CSR指令修改这两位会导致取指和访存的虚实转换规则改变。采用重取指机制处理。
-\end{enumerate}
+% \subsubsection{CSR冲突的整体处理}
 
-\subsubsection{CSR冲突的整体处理}
+% CSR写后读冲突检测与处理见流水线集成章节
 
-\noindent\textbf{CSR写后读冲突的种类}
-
-在MMU中，CSR的写后读冲突主要包括：
-
-\begin{enumerate}
-    \item \textbf{显式写后读}：CSR写入指令(CSRWR/CSRXCHG)修改CSR，后续指令读取该CSR。
-    
-    \item \textbf{隐式写后读}：异常处理过程中硬件隐式修改CRMD、PRMD、ERA、ESTAT、BADV、TLBEHI等CSR，后续指令可能读取这些CSR。
-\end{enumerate}
-
-\noindent\textbf{冲突检测与处理}
-
-在stage\_id.v中，对ID级指令进行CSR冲突检测：
-
-\begin{lstlisting}[language=Verilog, caption=CSR写后读冲突检测]
-// Detect explicit CSR write-after-read hazards
-wire csr_hazard_ex  = ex_csr_we  & (ex_csr_num  == id_csr_num) & ex_valid;
-wire csr_hazard_mem = mem_csr_we & (mem_csr_num == id_csr_num) & mem_valid;
-wire csr_hazard_wb  = csr_we     & (csr_num     == id_csr_num) & wb_valid;
-
-// Exception may implicitly write certain CSRs
-wire ex_may_write_csr  = ex_ex_valid;
-wire mem_may_write_csr = mem_ex_valid;
-wire wb_may_write_csr  = wb_ex_valid;
-
-// CSRs implicitly modified by exceptions
-wire id_reads_ex_modified_csr = 
-    (id_csr_num == `CSR_CRMD)   ||
-    (id_csr_num == `CSR_PRMD)   ||
-    (id_csr_num == `CSR_ERA)    ||
-    (id_csr_num == `CSR_ESTAT)  ||
-    (id_csr_num == `CSR_BADV)   ||
-    (id_csr_num == `CSR_TLBEHI) ||
-    (id_csr_num == `CSR_TLBIDX);
-
-// Stall if there's a conflict
-wire id_stall_csr = id_is_csr & 
-    (csr_hazard_ex | csr_hazard_mem | csr_hazard_wb |
-     (ex_may_write_csr & id_reads_ex_modified_csr) |
-     (mem_may_write_csr & id_reads_ex_modified_csr) |
-     (wb_may_write_csr & id_reads_ex_modified_csr));
-\end{lstlisting}
-
-\noindent\textbf{特殊冲突：重取指标志机制}
-
-对于某些CSR修改（如CRMD、ASID）和TLB修改指令（TLBWR、TLBFILL、INVTLB），由于影响范围是整个地址翻译流水线，最早在 ID 级才能知道是TLB相关指令，此时 IF 级已经开始取址，无法简单地通过阻塞解决。采用重取指标志机制：
-
-[TODO: fill it after implementation]
-
-% \begin{lstlisting}[language=Verilog, caption=重取指标志设置]
-% // Instructions that require refetch of subsequent instructions
-% wire set_refetch_flag = wb_csr_we & (
-%     (csr_num == `CSR_CRMD) |
-%     (csr_num == `CSR_DMWO) |
-%     (csr_num == `CSR_DMW1)
-% ) | 
-% wb_is_tlbwr | 
-% wb_is_tlbfill | 
-% wb_is_invtlb;
-% 
-% // Mark all younger instructions with refetch flag
-% always @(posedge clk) begin
-%     if (rst || flush) begin
-%         refetch_flag <= 1'b0;
-%     end
-%     else if (set_refetch_flag) begin
-%         // Set flag: subsequent instructions need refetch
-%         refetch_flag <= 1'b1;
-%     end
-%     else if (refetch_instruction_reaches_wb) begin
-%         // Clear flag after refetch instruction is processed
-%         refetch_flag <= 1'b0;
-%     end
-% end
-% \end{lstlisting}
+% 重取指标志机制见流水线集成章节
