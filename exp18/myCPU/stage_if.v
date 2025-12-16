@@ -19,6 +19,9 @@ module stage_if(
     input wire        input_tlb_ex,
     input wire [5:0]  input_tlb_ecode,
 
+    // ADEF exception input
+    input wire        input_except_adef,
+
     // exception info
     output wire [5:0]  output_ecode,
     output wire [8:0]  output_esubcode,
@@ -77,7 +80,7 @@ module stage_if(
     assign validout = raw_validout & ~cancelled & ~cancelout;
 
     reg [31:0] pc, inst;
-    wire except_adef = (pc[1:0] != 2'b0);
+    reg except_adef_r;
     
     reg tlb_ex_r;
     reg [5:0] tlb_ecode_r;
@@ -87,10 +90,12 @@ module stage_if(
             pc <= 32'h0;
             tlb_ex_r <= 1'b0;
             tlb_ecode_r <= 6'h0;
+            except_adef_r <= 1'b0;
         end else if (refreshing) begin
             pc <= input_pc;
             tlb_ex_r <= input_tlb_ex;
             tlb_ecode_r <= input_tlb_ecode;
+            except_adef_r <= input_except_adef;
         end
     end
 
@@ -143,7 +148,7 @@ module stage_if(
     always @(posedge clk) begin
         if (rst) begin
             already_ok <= 1'b0;
-        end else if (refreshing && (input_tlb_ex || except_adef)) begin
+        end else if (refreshing && (input_tlb_ex || input_except_adef)) begin
             // No SRAM data needed when we already know this fetch faults
             already_ok <= 1'b1;
         end else if (refreshing && buffer_valid) begin
@@ -156,7 +161,7 @@ module stage_if(
     end
 
     // Allow pipeline to advance as soon as we know an exception, without waiting for SRAM data
-    assign readygo = already_ok | input_tlb_ex | tlb_ex_r | except_adef;
+    assign readygo = already_ok;
 
     // assign inst_sram_addr = pc;
     // assign inst_sram_req = ~except_adef & (state == REQ) & valid;
@@ -168,10 +173,10 @@ module stage_if(
     assign output_pc = pc;
     assign output_inst = inst;
 
-    wire has_exception = except_adef | tlb_ex_r;
+    wire has_exception = except_adef_r | tlb_ex_r;
     assign output_ex_valid = has_exception & validout;
-    assign output_ecode = except_adef ? `ECODE_ADEF : tlb_ecode_r;
-    assign output_esubcode = except_adef ? `ESUBCODE_ADEF : 9'h0;
+    assign output_ecode = except_adef_r ? `ECODE_ADEF : tlb_ecode_r;
+    assign output_esubcode = except_adef_r ? `ESUBCODE_ADEF : 9'h0;
 
     assign output_is_csr = has_exception;
     assign output_csr_en = has_exception;

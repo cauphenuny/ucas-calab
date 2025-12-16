@@ -263,6 +263,7 @@ module mycpu_top(
         .input_pc(pc),
         .input_tlb_ex(if_ex_tlb),
         .input_tlb_ecode(if_ex_ecode),
+        .input_except_adef(if_pc_adef),
         .output_pc(if_pc),
         .output_inst(if_inst),
 
