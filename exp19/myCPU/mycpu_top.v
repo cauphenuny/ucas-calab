@@ -247,8 +247,6 @@ module mycpu_top(
         end
     end
 
-    assign if_validin = addr_sent;
-
     wire if_pc_adef = inst_vaddr[1:0] != 2'b00;
 
     // If IF already knows this PC will fault (TLB or alignment), let the stage
