@@ -252,7 +252,6 @@ module mycpu_top(
     // If IF already knows this PC will fault (TLB or alignment), let the stage
     // proceed without issuing an AXI request for the bad address.
     assign if_validin    = addr_sent | if_ex_tlb | if_pc_adef;
-    assign inst_sram_req = ~addr_sent & ~if_ex_tlb & ~if_pc_adef;
 
     // Instruction fetch address translation
     wire [31:0] inst_vaddr = pc;
@@ -326,7 +325,7 @@ module mycpu_top(
     assign if_meta_tlb_index = if_ex_tlb ? s0_index : 4'h0;
     assign if_meta_tlb_ps    = if_ex_tlb ? s0_ps    : 6'h0;
 
-    assign inst_sram_req   = ~addr_sent & ~if_ex_tlb;
+    assign inst_sram_req = ~addr_sent & ~if_ex_tlb & ~if_pc_adef;
     assign inst_sram_addr  = inst_paddr;
     assign inst_sram_wr    = 1'b0;
     assign inst_sram_size  = 2'b10; // word
