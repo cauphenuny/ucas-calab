@@ -45,15 +45,7 @@ end else begin
 end
 \end{lstlisting}
 
-关键实现细节：
-
-\begin{enumerate}
-    \item \textbf{权限检查}：DMW中的PLVL位指定该窗口在哪些特权等级下可用，当前特权等级必须满足要求。
-    
-    \item \textbf{高位替换}：虚地址的[31:29]位用于匹配DMW的虚地址高位，匹配成功则将该虚地址的[27:0]位与DMW配置的物理段高位拼接生成物理地址。
-    
-    \item \textbf{存储访问类型}：DMW中的MAT域指定该窗口上访存操作的缓存属性（缓存还是非缓存）。
-\end{enumerate}
+% 关键实现细节见异常处理章节
 
 \subsubsection{第三级：TLB查询与页表转换}
 
@@ -98,12 +90,4 @@ end else begin
 end
 \end{lstlisting}
 
-TLB查询的关键点：
-
-\begin{enumerate}
-    \item \textbf{偶数/奇数页选择}：TLB中每项存储两个相邻页的转换信息。根据虚地址的bit12决定使用哪个页的信息。
-    
-    \item \textbf{权限检查}：TLB项的PLV域指定该页的最小特权等级，当前特权等级必须不低于此值。
-    
-    \item \textbf{脏位检查}：Store操作时，若D位为0，表示页面为只读，需要触发页修改异常(PME)。
-\end{enumerate}
+% TLB查询的关键点见异常处理章节
