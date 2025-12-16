@@ -214,16 +214,8 @@ module stage_ex(
             data_req_en <= 1'b0;
     end
 
-    wire mem_req_ready;
-
-    assign mem_req_ready = ~is_mem_op
-                        | (data_sram_req & data_sram_addr_ok)
-                        | req_ok_hold
-                        | ex_valid;
-
     assign readygo =  ~valid | (
                         (((current_state == STATE_REQ) & alu_output_valid) | (current_state == STATE_DONE))
-                        & mem_req_ready
                     );
 
     wire alu_req_valid = valid && (current_state == STATE_REQ) && ~(older_ex & long_op) && ~cancel;
