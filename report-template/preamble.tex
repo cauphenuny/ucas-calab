@@ -2,6 +2,7 @@
 \geometry{left=2.0cm,right=2.0cm,top=2.5cm,bottom=2.5cm}
 
 \usepackage{ctex} % 支持中文的LaTeX宏包
+\usepackage{enumitem} % 自定义列表环境
 \usepackage{amsmath,amsfonts,graphicx,subfigure,amssymb,bm,amsthm,mathrsfs,mathtools,breqn} % 数学公式和符号的宏包集合
 \usepackage{algorithm,algorithmicx} % 算法和伪代码
 \usepackage[noend]{algpseudocode} % 算法和伪代码
@@ -69,4 +70,4 @@
 
 % 对 section 等环境的序号使用中文
 \renewcommand \thesection{\zhnum{section}、}
-\renewcommand \thesubsection{\arabic{section}}
+\renewcommand \thesubsection{\arabic{section}.\arabic{subsection}}

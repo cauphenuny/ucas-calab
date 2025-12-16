@@ -1,0 +1,69 @@
+% 这是中国科学院大学计算机科学与技术专业《计算机组成原理（研讨课）》使用的实验报告 Latex 模板
+% 本模板与 2024 年 2 月 Jun-xiong Ji 完成, 更改自由 Shing-Ho Lin 和 Jun-Xiong Ji 于 2022 年 9 月共同完成的基础物理实验模板
+% 如有任何问题, 请联系: jijunxoing21@mails.ucas.ac.cn
+% This is the LaTeX template for report of Experiment of Computer Organization and Design courses, based on its provided Word template. 
+% This template is completed on Febrary 2024, based on the joint collabration of Shing-Ho Lin and Junxiong Ji in September 2022. 
+% Adding numerous pictures and equations leads to unsatisfying experience in Word. Therefore LaTeX is better. 
+% Feel free to contact me via: jijunxoing21@mails.ucas.ac.cn
+
+\documentclass[11pt]{article}
+
+\input{preamble.tex}
+
+\begin{document}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%改这里可以修改实验报告表头的信息
+\newcommand{\name}{袁晨圃, 王永生, 李知谦}
+\newcommand{\studentNum}{19}
+\newcommand{\major}{计算机科学与技术}
+\newcommand{\labNum}{17,18,19}
+\newcommand{\labName}{存储管理单元设计}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\input{head.tex}
+
+\section{实验目标与总体设计}
+
+Prj9 包含 exp17、exp18、exp19 三部分，旨在将 CPU 从仅支持简单的直接地址翻译模式，升级为支持完整的存储管理单元（MMU）功能，实现软硬件协同的虚实地址转换与权限管理。具体目标包括：
+
+\begin{itemize}
+    \item TLB 模块设计：设计一个支持双端口并发查询（取指与访存）的全相联 TLB 模块，支持 4KB/4MB 页大小及 ASID 校验。 
+    \item 指令与 CSR 集成：在流水线中集成 TLB 模块，实现 \verb|TLBSRCH|、\verb|TLBRD|、\verb|TLBWR|、\verb|TLBFILL|、\verb|INVTLB| 等 TLB 维护指令，以及 \verb|ASID|、\verb|TLBIDX|、\verb|TLBEHI/LO| 等 MMU 相关控制状态寄存器。 
+    \item 地址翻译与异常支持：构建完整的地址翻译层级（直接翻译 → 直接映射窗口 → TLB 映射），并实现 TLB 重填、页无效、页修改及特权等级不合规等 MMU 相关异常的硬件检测与处理机制。
+\end{itemize}
+
+具体设计思路如下：
+首先，独立设计 TLB 模块，其内部维护一个二维查找表，提供两套独立的查询端口以支持流水线中取指（Pre-IF）和访存（EX/MEM）阶段的并行地址转换需求。
+其次，在流水线集成阶段，重点解决 MMU 配置与使用之间的冲突。由于 CSR 指令（如修改 \verb|CRMD|、\verb|ASID|）或 TLB 维护指令（如 \verb|TLBWR|）会改变地址翻译规则，设计中需采用“重取指（Refetch）”机制：一旦流水线检测到此类指令，即标记后续指令为需要重取，待配置更新完成后清空流水线并从受影响的指令处重新取指。
+最后，在地址翻译逻辑中，通过组合逻辑实现优先级的硬件裁决：优先判断直接地址翻译模式（\verb|CRMD.DA|），其次匹配直接映射窗口（\verb|DMW0/1|），最后进行 TLB 查表，确保物理地址生成的正确性与时序的稳定性。
+
+\section{逻辑电路结构图与代码说明}
+
+\input{code/tlb.tex}
+
+\input{code/instruction.tex}
+
+\input{code/csr.tex}
+
+\input{code/integration.tex}
+
+\input{code/exception.tex}
+
+\section{实验过程中遇到的问题、对问题的思考过程及解决方法}
+
+\section{对讲义中思考题（如有）的理解和回答}
+
+\noindent
+$\bullet$
+\textbf{}
+
+\vspace{1ex}
+
+\section{实验所耗时间}
+
+\newcommand{\labTime}{5}
+
+在课后，花费了大约\underline{\makebox[5em][c]{\labTime}}小时完成此次实验。
+
+\end{document}

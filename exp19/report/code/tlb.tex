@@ -1,0 +1,275 @@
+\subsection{TLB 模块设计}
+
+\subsubsection{新增辅助模块}
+
+TLB 中存在很多相同的二维查找表取行操作，封装成一个模块。
+
+\begin{lstlisting}
+// NOTE: one-hot selector
+module selector #(
+    parameter integer DATA_WIDTH = 32,
+    parameter integer SEL_NUM = 16
+)(
+    input wire [SEL_NUM-1:0] sel,
+    input wire [DATA_WIDTH-1:0] in [SEL_NUM-1:0],
+    output wire [DATA_WIDTH-1:0] out
+);
+
+wire [SEL_NUM-1:0] mat[DATA_WIDTH-1:0];
+
+// transpose
+genvar i, j;
+generate
+    for (i = 0; i < SEL_NUM; i = i + 1) begin
+        for (j = 0; j < DATA_WIDTH; j = j + 1) begin
+            assign mat[j][i] = sel[i] & in[i][j];
+        end
+    end
+endgenerate
+
+// reduce
+generate
+    for (i = 0; i < DATA_WIDTH; i = i + 1) begin
+        assign out[i] = |mat[i];
+    end
+endgenerate
+
+endmodule
+\end{lstlisting}
+
+将输入与选择信号按位与，然后转置，最后用或运算规约。因为是 one-hot 选择信号，所以每一位最终只有一个输入会被选中，可以直接用或规约。
+模块中的 parameter 和 generate 语句使得模块可以灵活适应不同宽度和选择数量的需求。
+
+\subsubsection{TLB Search 单元}
+
+两个 search 单元，分别适用于取指和访存。
+
+依旧将重复逻辑封装成模块，输入 tlb 查找表和 \verb|vppn|, \verb|va_bit12|, \verb|asid| 信号，输出 \verb|found|, \verb|index|, \verb|ppn|, \verb|ps|, \verb|plv|, \verb|mat|, \verb|d|, \verb|v| 信号。
+
+\begin{lstlisting}
+module tlb_searcher #(
+    parameter integer TLBNUM = 16
+)(
+    input wire              tlb_e      [TLBNUM-1:0],
+    input wire              tlb_ps4MB  [TLBNUM-1:0],
+    input wire [      18:0] tlb_vppn   [TLBNUM-1:0],
+    input wire [       9:0] tlb_asid   [TLBNUM-1:0],
+    input wire              tlb_g      [TLBNUM-1:0],
+    input wire [      19:0] tlb_ppn0   [TLBNUM-1:0],
+    input wire [       1:0] tlb_plv0   [TLBNUM-1:0],
+    input wire [       1:0] tlb_mat0   [TLBNUM-1:0],
+    input wire              tlb_d0     [TLBNUM-1:0],
+    input wire              tlb_v0     [TLBNUM-1:0],
+    input wire [      19:0] tlb_ppn1   [TLBNUM-1:0],
+    input wire [       1:0] tlb_plv1   [TLBNUM-1:0],
+    input wire [       1:0] tlb_mat1   [TLBNUM-1:0],
+    input wire              tlb_d1     [TLBNUM-1:0],
+    input wire              tlb_v1     [TLBNUM-1:0],
+
+    input wire [18:0] vppn,
+    input wire        va_bit12,
+    input wire [ 9:0] asid,
+    // output wire match[TLBNUM-1:0],
+    // output wire match0[TLBNUM-1:0],
+    // output wire match1[TLBNUM-1:0],
+
+    output wire       found,
+    output wire [$clog2(TLBNUM)-1:0] index,
+    output wire [19:0] ppn,
+    output wire [ 5:0] ps,
+    output wire [ 1:0] plv,
+    output wire [ 1:0] mat,
+    output wire       d,
+    output wire       v
+);
+\end{lstlisting}
+
+\noindent
+$\bullet$
+\textbf{生成选择信号}
+
+\verb|match| 信号生成逻辑：对于每个TLB条目i，match[i]表示该条目是否与输入的虚地址匹配。匹配条件包括：
+
+\begin{itemize}
+    \item 高位虚页号\verb|vppn[18:9]|与\verb|tlb_vppn[i][18:9]|相等；
+    \item 如果是4MB页(\verb|tlb_ps4MB[i]=1|)，则忽略低位虚页号；否则，低位\verb|vppn[8:0]|必须与\verb|tlb_vppn[i][8:0]|相等；
+    \item 如果是全局页(\verb|tlb_g[i]=1|)，则忽略ASID；否则，ASID必须匹配；
+    \item 条目必须存在(\verb|tlb_e[i]=1|)。
+\end{itemize}
+
+\verb|match0[i]|和\verb|match1[i]|进一步根据页大小和\verb|va_bit12|选择偶数页或奇数页：
+
+\begin{itemize}
+    \item 对于4KB页，\verb|even = ~va_bit12|, \verb|odd = va_bit12|；
+    \item 对于4MB页，\verb|even = ~vppn[8]|, \verb|odd = vppn[8]|。
+\end{itemize}
+
+\begin{lstlisting}
+wire [TLBNUM-1:0] match, match0, match1;
+
+genvar i;
+generate
+    for (i = 0; i < TLBNUM; i = i + 1) begin
+        assign match[i] = (vppn[18:9] == tlb_vppn[i][18:9])
+                        && (tlb_ps4MB[i] || vppn[8:0] == tlb_vppn[i][8:0])
+                        && (tlb_g[i] || asid == tlb_asid[i])
+                        && tlb_e[i];
+        wire even = tlb_ps4MB[i] ? ~vppn[8] : ~va_bit12;
+        wire  odd = tlb_ps4MB[i] ?  vppn[8] :  va_bit12;
+        assign match0[i] = match[i] && even;
+        assign match1[i] = match[i] &&  odd;
+    end
+endgenerate
+\end{lstlisting}
+
+\noindent
+$\bullet$
+\textbf{选出结果}
+
+这一部分是重复的用 selector 选出结果的逻辑，这里以 ppn/plv 为例。
+
+\begin{lstlisting}
+wire [19:0] ppn0, ppn1;
+
+selector #(
+    .DATA_WIDTH(20),
+    .SEL_NUM(TLBNUM)
+) ppn0_selector (
+    .sel(match0),
+    .in(tlb_ppn0),
+    .out(ppn0)
+);
+selector #(
+    .DATA_WIDTH(20),
+    .SEL_NUM(TLBNUM)
+) ppn1_selector (
+    .sel(match1),
+    .in(tlb_ppn1),
+    .out(ppn1)
+);
+
+wire [1:0] plv0, plv1;
+selector #(
+    .DATA_WIDTH(2),
+    .SEL_NUM(TLBNUM)
+) plv0_selector (
+    .sel(match0),
+    .in(tlb_plv0),
+    .out(plv0)
+);
+selector #(
+    .DATA_WIDTH(2),
+    .SEL_NUM(TLBNUM)
+) plv1_selector (
+    .sel(match1),
+    .in(tlb_plv1),
+    .out(plv1)
+);
+assign ppn = ppn0 | ppn1;
+assign plv = plv0 | plv1;
+\end{lstlisting}
+
+因为 match0 和 match1 互斥，所以可以直接用或运算合并结果。
+
+\vspace{1em}
+
+ps 的输出有点tricky：由于实验实现的精简 loongarch32 只支持 4KB 和 4MB 两种页大小，所以 ps 只有两种可能的值因此可以直接用一位的 \verb|tlb_ps4MB| 信号来决定输出。
+
+\begin{lstlisting}
+// NOTE: 虽然 4MB 是 2^22，但由于被两个物理页均分了，物理页的大小实际上是 2^21
+assign ps = ps4MB ? 6'd21 : 6'd12; // 4MB : 4KB
+\end{lstlisting}
+
+\subsubsection{TLB Read / Write 单元}
+
+\noindent
+$\bullet$
+\textbf{生成选择信号}
+
+\begin{lstlisting}
+wire [TLBNUM-1:0] r_select, w_select;
+generate
+    for (i = 0; i < TLBNUM; i = i + 1) begin
+        assign r_select[i] = (r_index == i);
+        assign w_select[i] = we && (w_index == i);
+    end
+endgenerate
+\end{lstlisting}
+
+\noindent
+$\bullet$
+\textbf{主要逻辑}
+
+$\bullet$ \textbf{Read}
+
+Read 部分与 Search 类似，由一系列selector组成，不再赘述。
+
+$\bullet$ \textbf{Write}
+
+Write 部分需要考虑invtlb和 write 两种情况
+
+首先按照讲义中的建议方法生成 \verb|invtlb_match| 信号：
+
+\begin{lstlisting}
+wire [TLBNUM-1:0] inv_cond1, inv_cond2, inv_cond3, inv_cond4;
+wire [TLBNUM-1:0] inv_match;
+generate
+    for (i = 0; i < TLBNUM; i = i + 1) begin
+        assign inv_cond1[i] = tlb_g[i] == 1'b0;
+        assign inv_cond2[i] = tlb_g[i] == 1'b1;
+        assign inv_cond3[i] = (tlb_asid[i] == invtlb_asid);
+        assign inv_cond4[i] = (tlb_vppn[i] == invtlb_vppn);
+        assign inv_match[i] =
+            (invtlb_op == 5'h0) | // clear all
+            (invtlb_op == 5'h1) | // clear all
+            (invtlb_op == 5'h2) & inv_cond2[i] | // clear global
+            (invtlb_op == 5'h3) & inv_cond1[i] | // clear non-global
+            (invtlb_op == 5'h4) & (inv_cond1[i] && inv_cond3[i]) | // clear non-global & asid
+            (invtlb_op == 5'h5) & (inv_cond1[i] && inv_cond3[i] && inv_cond4[i]) | // clear non-global & asid & vppn
+            (invtlb_op == 5'h6) & ((inv_cond2[i] || inv_cond3[i]) && inv_cond4[i]); // clear (global | asid) & vppn
+    end
+endgenerate
+\end{lstlisting}
+
+对于普通的表项，在 \verb|we && w_select[i]| 条件下写入新值。
+
+\begin{lstlisting}
+generate
+    for (i = 0; i < TLBNUM; i = i + 1) begin
+        always @(posedge clk) begin
+            if (we && w_select[i]) begin
+                tlb_vppn[i] <= w_vppn;
+                tlb_asid[i] <= w_asid;
+                tlb_g[i] <= w_g;
+                tlb_ppn0[i] <= w_ppn0;
+                tlb_plv0[i] <= w_plv0;
+                tlb_mat0[i] <= w_mat0;
+                tlb_d0[i] <= w_d0;
+                tlb_v0[i] <= w_v0;
+                tlb_ppn1[i] <= w_ppn1;
+                tlb_plv1[i] <= w_plv1;
+                tlb_mat1[i] <= w_mat1;
+                tlb_d1[i] <= w_d1;
+                tlb_v1[i] <= w_v1;
+                tlb_ps4MB[i] <= w_ps == 6'd21;
+            end
+        end
+    end
+endgenerate
+\end{lstlisting}
+
+对于 \verb|tlb_e|，在 \verb|invtlb_match[i]| 条件下清零。
+
+\begin{lstlisting}
+generate
+    for (i = 0; i < TLBNUM; i = i + 1) begin
+        always @(posedge clk) begin
+            if (we && w_select[i]) begin
+                tlb_e[i] <= w_e;
+            end else if (invtlb_valid && inv_match[i]) begin
+                tlb_e[i] <= 1'b0;
+            end
+        end
+    end
+endgenerate
+\end{lstlisting}

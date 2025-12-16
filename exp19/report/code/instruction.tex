@@ -1,0 +1,311 @@
+\subsection{TLB 相关指令实现}
+
+\begin{table}[h]
+\centering
+\caption{TLB指令执行特性对比}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{指令} & \textbf{执行级} & \textbf{冲突处理} & \textbf{备注} \\
+\hline
+TLBSRCH & EX & CSR读冲突用阻塞 & 查找结果在WB级写入CSR \\
+\hline
+TLBRD & WB & TLBIDX读冲突用阻塞 & 读出TLB项到CSR \\
+\hline
+TLBWR & WB & 写TLB用重取指 & 指定位置写入 \\
+\hline
+TLBFILL & WB & 写TLB用重取指 & 随机位置写入 \\
+\hline
+INVTLB & EX & 写TLB用重取指 & 有选择无效项 \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{TLBSRCH指令的实现}
+
+TLBSRCH指令用于查询TLB中是否存在匹配项。该指令的功能是：将CSR.ASID和CSR.TLBEHI的信息用于查询TLB，如果有命中项，将命中项的索引写入CSR.TLBIDX的Index域且NE位置0；否则将NE位置1。
+
+TLBSRCH指令的执行涉及以下内容：
+
+\begin{enumerate}
+    \item \textbf{查找端口复用}：为避免新增大量查找逻辑，TLBSRCH指令复用访存指令的TLB查找端口，在EX级发起查找请求。
+    
+    \item \textbf{CSR读写冲突处理}：TLBSRCH指令读取CSR.ASID和CSR.TLBEHI，这两个CSR可能被前面的指令修改（如CSRWR、CSRXCHG或TLBRD）。若修改指令在MEM级而TLBSRCH在EX级，直接使用CSR值会出现问题。解决方案是采用阻塞机制：当检测到写后读冲突时，ID级阻塞TLBSRCH指令，直到修改指令完成。
+    
+    \item \textbf{访存虚地址来源切换}：TLBSRCH指令查找使用的VPPN来自CSR.TLBEHI，而load/store指令使用的VPPN来自计算得到的虚地址。在EX级需要根据指令类型选择合适的VPPN源。
+\end{enumerate}
+
+在stage\_ex.v中，使用ex\_inst\_tlbsrch信号识别TLBSRCH指令，并相应调整TLB查找输入：
+
+\begin{lstlisting}[language=Verilog, caption=TLBSRCH虚地址源选择逻辑]
+// For TLBSRCH, use CSR.TLBEHI; for load/store, use data_vaddr
+assign s1_vppn = ex_inst_tlbsrch ? 
+    u_csr.csr_tlbehi[`CSR_TLBEHI_VPPN] : 
+    data_vaddr[31:13];
+assign s1_va_bit12 = ex_inst_tlbsrch ? 1'b0 : data_vaddr[12];
+\end{lstlisting}
+
+在mycpu\_top.v中实现CSR冲突检测：
+
+\begin{lstlisting}[language=Verilog, caption=TLBSRCH CSR依赖性检查]
+// TLBSRCH reads CSR in EX stage
+wire id_is_tlbsrch = u_stage_id.output_inst_tlbsrch;
+
+// Check for writes to TLBEHI and ASID in pipeline
+wire ex_writes_tlbsrch_csr  = u_stage_ex.valid & ex_csr_we & 
+    ((ex_csr_num == `CSR_TLBEHI) | (ex_csr_num == `CSR_ASID));
+wire mem_writes_tlbsrch_csr = u_stage_mem.valid & mem_csr_we & 
+    ((mem_csr_num == `CSR_TLBEHI) | (mem_csr_num == `CSR_ASID));
+wire wb_writes_tlbsrch_csr  = wb_valid & csr_we & 
+    ((csr_num == `CSR_TLBEHI) | (csr_num == `CSR_ASID));
+
+// Stall ID if there's a write-after-read hazard
+wire id_stall_tlbsrch = id_is_tlbsrch & 
+    (ex_writes_tlbsrch_csr | mem_writes_tlbsrch_csr | wb_writes_tlbsrch_csr);
+\end{lstlisting}
+
+执行流程：
+
+\begin{enumerate}
+    \item \textbf{ID级}：识别TLBSRCH指令，检查TLBEHI和ASID依赖
+    \item \textbf{EX级}：
+    \begin{itemize}
+        \item 从CSR.TLBEHI和CSR.ASID读取查找参数
+        \item 将VPPN和ASID发送到TLB查找模块
+        \item 获得查找结果（found和index）
+    \end{itemize}
+    \item \textbf{WB级}：
+    \begin{itemize}
+        \item 更新CSR.TLBIDX的Index域（查找命中时）
+        \item 更新CSR.TLBIDX的NE位（命中为0，未命中为1）
+    \end{itemize}
+\end{enumerate}
+
+\subsubsection{TLBRD指令的实现}
+
+TLBRD指令用于读取TLB表项内容。该指令以CSR.TLBIDX的Index域值作为索引读取TLB表项，并将读出的数据填入相关CSR（TLBEHI、TLBELO0、TLBELO1、TLBIDX的PS域）。
+
+\begin{enumerate}
+    \item \textbf{读取时序}：TLBRD指令在WB级进行读取操作，确保读到的CSR.TLBIDX值和写入的结果都是正确的。
+    
+    \item \textbf{索引来源}：TLBRD指令读取CSR.TLBIDX的Index域作为TLB读地址。该CSR值可能被前面的CSRWR、CSRXCHG或TLBSRCH指令修改。
+    
+    \item \textbf{NE位处理}：当读取的TLB项无效时（r\_e=0），需要清除PS域并置NE位；当有效时（r\_e=1），保留PS值。
+\end{enumerate}
+
+在csr.v中的TLBRD执行逻辑：
+
+\begin{lstlisting}[language=Verilog, caption=TLBRD执行逻辑]
+// TLBRD: Read TLB entry based on Index field
+else if (tlbrd_en) begin
+    // Update TLBIDX: NE bit and PS field
+    csr_tlbidx[`CSR_TLBIDX_PS] <= r_e ? r_ps : 6'b0;
+    csr_tlbidx[`CSR_TLBIDX_NE] <= ~r_e;
+    
+    // Update TLBEHI with VPPN and ASID
+    csr_tlbehi[`CSR_TLBEHI_VPPN] <= r_vppn;
+    
+    // Update TLBELO0 and TLBELO1
+    csr_tlbelo0[`CSR_TLBELO_PPN]  <= r_ppn0;
+    csr_tlbelo0[`CSR_TLBELO_PLV]  <= r_plv0;
+    csr_tlbelo0[`CSR_TLBELO_MAT]  <= r_mat0;
+    csr_tlbelo0[`CSR_TLBELO_D]    <= r_d0;
+    csr_tlbelo0[`CSR_TLBELO_V]    <= r_v0;
+    
+    csr_tlbelo1[`CSR_TLBELO_PPN]  <= r_ppn1;
+    csr_tlbelo1[`CSR_TLBELO_PLV]  <= r_plv1;
+    csr_tlbelo1[`CSR_TLBELO_MAT]  <= r_mat1;
+    csr_tlbelo1[`CSR_TLBELO_D]    <= r_d1;
+    csr_tlbelo1[`CSR_TLBELO_V]    <= r_v1;
+    
+    // Update ASID
+    csr_asid[`CSR_ASID_ASID] <= r_asid;
+end
+\end{lstlisting}
+
+关键修复：当TLB项无效时，必须将PS域清为0，避免读出错误的页大小值：
+
+\begin{lstlisting}[language=Verilog, caption=TLBIDX PS域处理修复]
+// If TLB entry is invalid (r_e=0), PS should be cleared to 0
+csr_tlbidx[`CSR_TLBIDX_PS] <= r_e ? r_ps : 6'b0;
+\end{lstlisting}
+
+\noindent\textbf{冲突处理}
+
+TLBRD指令更新CSR会引发两类冲突：
+
+\begin{enumerate}
+    \item \textbf{对TLBIDX的写后读冲突}：由于TLBRD指令在WB级更新TLBIDX，而后续指令可能在ID级需要读取TLBIDX。解决方案是当检测到后续指令读TLBIDX时，若有待完成的TLBRD指令在EX/MEM/WB流水线中，则阻塞ID级。
+    
+    \item \textbf{对ASID的写后读冲突}：TLBRD更新ASID后，后续的取指和访存指令需要该最新值进行TLB查找。此时采用重取指机制解决。
+\end{enumerate}
+
+\subsubsection{TLBWR指令的实现}
+
+TLBWR指令将CSR中的TLB表项信息写入TLB的指定项。被写入的表项信息来自CSR.TLBEHI、CSR.TLBELO0、CSR.TLBELO1和CSR.TLBIDX.PS，写入位置由CSR.TLBIDX的Index域指定。
+
+\begin{enumerate}
+    \item \textbf{写入时序}：TLBWR指令在WB级进行写入操作，确保读取到的所有CSR值都是正确的。
+    
+    \item \textbf{表项有效性判断}：若此时CSR.ESTAT.Ecode=0x3F（处于TLB重填异常处理中），则填入有效项；否则根据CSR.TLBIDX.NE位判断：NE=1时填入无效项，NE=0时填入有效项。
+    
+    \item \textbf{写后读冲突处理}：TLBWR修改TLB内容会影响后续指令的取指和访存虚实地址转换。由于TLBWR在WB级修改TLB，而IF级和EX级可能同时进行查找，无法通过简单阻塞解决。采用重取指机制：标记TLBWR后续的所有指令为需要重取，待TLBWR完成后重新取指。
+\end{enumerate}
+
+在csr.v中的TLBWR执行逻辑：
+
+\begin{lstlisting}[language=Verilog, caption=TLBWR表项有效性处理]
+// TLBWR: Write TLB entry
+wire tlbwr_en = /* TLBWR instruction detected */;
+wire w_e_value;
+
+// Determine entry validity based on exception state
+if (wb_ecode == `ECODE_TLBR) begin
+    // In TLB refill exception handler: always write valid entry
+    w_e_value = 1'b1;
+end else begin
+    // Normal case: use NE bit to determine validity
+    w_e_value = ~csr_tlbidx[`CSR_TLBIDX_NE];
+end
+\end{lstlisting}
+
+在mycpu\_top.v中的重取指机制：
+
+\begin{lstlisting}[language=Verilog, caption=TLBWR重取指标记]
+// Mark all instructions after TLBWR for refetch
+wire wb_is_tlbwr = /* TLBWR instruction in WB stage */;
+
+// Set refetch flag for subsequent instructions
+wire set_refetch_flag = wb_is_tlbwr | wb_is_tlbfill | wb_is_invtlb;
+\end{lstlisting}
+
+\subsubsection{TLBFILL指令的实现}
+
+TLBFILL指令功能与TLBWR类似，都是将TLB相关CSR中的页表信息写入TLB。区别在于：TLBWR指定写入位置（通过Index），而TLBFILL由硬件随机选择写入位置。
+
+\begin{enumerate}
+    \item \textbf{随机索引生成}：TLBFILL需要一个随机索引来决定写入TLB的哪一项。实现中使用一个简单的线性反馈移位寄存器(LFSR)或计数器生成伪随机数。
+    
+    \item \textbf{写入时序}：与TLBWR相同，在WB级进行写入操作。
+    
+    \item \textbf{异常处理特殊情况}：当处于TLB重填异常处理中（CSR.ESTAT.Ecode=0x3F）时，总是填入有效项，这是TLB重填的核心机制。
+\end{enumerate}
+
+在stage\_ex.v中生成随机索引：
+
+\begin{lstlisting}[language=Verilog, caption=TLBFILL随机索引生成]
+// Random index generation for TLBFILL
+reg [3:0] random_index;
+
+// Simple LFSR-based random generator
+always @(posedge clk) begin
+    if (rst) begin
+        random_index <= 4'b0001;
+    end else begin
+        random_index <= {random_index[2:0], 
+                        random_index[3] ^ random_index[2]};
+    end
+end
+
+// Pass random index to CSR module when TLBFILL executes
+wire tlbfill_index = inst_tlbfill ? random_index : 4'b0;
+\end{lstlisting}
+
+\subsubsection{INVTLB指令的实现}
+
+INVTLB指令用于无效TLB中的表项，维持TLB与内存页表的一致性。该指令支持多种操作类型（op=0~6），可以有选择地无效某些TLB表项。
+
+\begin{enumerate}
+    \item \textbf{并行匹配机制}：INVTLB指令需要对所有TLB表项进行匹配，判断哪些项需要无效。为支持高效执行，使用并行匹配逻辑，同时对所有表项进行匹配判断。
+    
+    \item \textbf{子匹配分解}：将各操作类型的匹配条件分解为多个"子匹配"：
+    \begin{itemize}
+        \item cond1：G位是否为0
+        \item cond2：G位是否为1  
+        \item cond3：源操作数指定的ASID是否匹配
+        \item cond4：源操作数指定的VA是否匹配VPPN和PS
+    \end{itemize}
+    
+    \item \textbf{操作类型编码}：
+    \begin{itemize}
+        \item op=0,1：无效所有项
+        \item op=2：无效所有G=1的项
+        \item op=3：保留（不执行）
+        \item op=4：无效所有G=0且ASID匹配的项
+        \item op=5：无效G=0、ASID匹配、VA匹配的项
+        \item op=6：无效G=1或(ASID匹配且VA匹配)的项
+    \end{itemize}
+\end{enumerate}
+
+在stage\_id.v中的INVTLB指令解码和有效性检查：
+
+\begin{lstlisting}[language=Verilog, caption=INVTLB指令解码]
+// Extract INVTLB operation code from instruction bits [4:0]
+wire [4:0] invtlb_op = inst[4:0];
+
+// Check if operation code is valid
+wire invtlb_op_valid = (invtlb_op == 5'h0) |
+                       (invtlb_op == 5'h1) |
+                       (invtlb_op == 5'h2) |
+                       (invtlb_op == 5'h3) |
+                       (invtlb_op == 5'h4) |
+                       (invtlb_op == 5'h5) |
+                       (invtlb_op == 5'h6);
+
+// Valid INVTLB instruction only if opcode is valid
+assign inst_invtlb = inst_invtlb_raw & invtlb_op_valid;
+\end{lstlisting}
+
+在TLB模块中的INVTLB执行逻辑：
+
+\begin{lstlisting}[language=Verilog, caption=TLB INVTLB匹配逻辑]
+// For each TLB entry i:
+wire cond1_i = ~tlb_g[i];              // G=0
+wire cond2_i = tlb_g[i];               // G=1
+wire cond3_i = (invtlb_asid == tlb_asid[i]); // ASID match
+wire cond4_i = (s1_vppn[...] == tlb_vppn[i][...]) & 
+               ps_match; // VA match
+
+// Match conditions for each operation
+wire inv_match[7:0];
+assign inv_match[0] = 1'b1;  // op=0: all
+assign inv_match[1] = 1'b1;  // op=1: all
+assign inv_match[2] = cond2_i;  // op=2: G=1
+assign inv_match[3] = 1'b0;  // op=3: reserved
+assign inv_match[4] = cond1_i & cond3_i;  // op=4: G=0 & ASID
+assign inv_match[5] = cond1_i & cond3_i & cond4_i;  // op=5: full
+assign inv_match[6] = (cond2_i | (cond3_i & cond4_i)); // op=6
+
+// Invalidate matching entries
+always @(posedge clk) begin
+    if (invtlb_valid) begin
+        case (invtlb_op[2:0])
+            // ... handle each operation type
+            default: ; // Invalid op, no action
+        endcase
+        
+        for (i = 0; i < TLBNUM; i = i + 1) begin
+            if (inv_match[i]) begin
+                tlb_e[i] <= 1'b0;
+            end
+        end
+    end
+end
+\end{lstlisting}
+
+在mycpu\_top.v中处理INVTLB的ASID和虚地址信息传递：
+
+\begin{lstlisting}[language=Verilog, caption=INVTLB信息流传递]
+// Pass ASID and VA information through pipeline
+wire [ 9:0] wb_invtlb_asid;
+wire [31:0] wb_invtlb_vaddr;
+
+// Connect to TLB module
+tlb_instance(
+    .invtlb_op(wb_invtlb_op),
+    .invtlb_asid(wb_invtlb_asid),
+    .invtlb_vppn(wb_invtlb_vaddr[31:13]),
+    // ... other connections
+);
+\end{lstlisting}
+
+INVTLB指令修改TLB内容，会与后续的取指和访存虚实地址转换产生写后读冲突。采用重取指机制：当WB级有INVTLB指令时，标记该指令后的所有指令为需要重取。

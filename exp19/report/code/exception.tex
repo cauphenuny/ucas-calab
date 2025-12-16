@@ -1,0 +1,317 @@
+\subsection{MMU 相关异常处理}
+
+\subsubsection{异常类型}
+
+MMU相关的异常包括：
+
+\begin{table}[H]
+\centering
+\caption{MMU相关异常类型}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{异常名} & \textbf{Ecode} & \textbf{触发条件} & \textbf{处理程序} \\
+\hline
+TLB重填异常(TLBR) & 0x3F & TLB未命中 & 重填异常处理程序 \\
+\hline
+Load页无效异常 & 0x08 & Load时V=0 & 普通异常 \\
+\hline
+Store页无效异常 & 0x09 & Store时V=0 & 普通异常 \\
+\hline
+取指页无效异常(PIF) & 0x0C & 取指时V=0 & 普通异常 \\
+\hline
+页特权不合规异常(PPI) & 0x0B & 权限检查失败 & 普通异常 \\
+\hline
+页修改异常(PME) & 0x0A & Store到D=0页 & 普通异常 \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{异常检测逻辑的实现}
+
+在EX级和IF级分别进行异常检测。EX级处理load/store异常，IF级处理取指异常。
+
+\begin{lstlisting}[language=Verilog, caption=EX级地址转换异常检测]
+// In EX stage for load/store operations
+if (tlb_lookup_result.found == 1'b0) begin
+    // TLB miss
+    ex_ecode = `ECODE_TLBR;
+    ex_excep = 1'b1;
+end else begin
+    // TLB hit, check various conditions
+    case (1'b1)
+        !tlb_lookup_result.v: begin
+            // Invalid page
+            if (is_load) begin
+                ex_ecode = `ECODE_PIL;  // Load Invalid
+            end else if (is_store) begin
+                ex_ecode = `ECODE_PIS;  // Store Invalid
+            end
+            ex_excep = 1'b1;
+        end
+        
+        (tlb_lookup_result.plv < crmd_plv): begin
+            // Privilege violation
+            ex_ecode = `ECODE_PPI;
+            ex_excep = 1'b1;
+        end
+        
+        (is_store && !tlb_lookup_result.d): begin
+            // Page modification exception
+            ex_ecode = `ECODE_PME;
+            ex_excep = 1'b1;
+        end
+        
+        default: begin
+            // No exception
+            ex_excep = 1'b0;
+        end
+    endcase
+end
+\end{lstlisting}
+
+\begin{lstlisting}[language=Verilog, caption=IF级取指异常检测]
+// In Pre-IF stage for instruction fetch
+if (tlb_lookup_result.found == 1'b0) begin
+    // TLB miss
+    if_ecode = `ECODE_TLBR;
+    if_excep = 1'b1;
+end else if (!tlb_lookup_result.v) begin
+    // Invalid page for fetch
+    if_ecode = `ECODE_PIF;
+    if_excep = 1'b1;
+end else if (tlb_lookup_result.plv < crmd_plv) begin
+    // Privilege violation
+    if_ecode = `ECODE_PPI;
+    if_excep = 1'b1;
+end else begin
+    if_excep = 1'b0;
+end
+\end{lstlisting}
+
+\textbf{BADV和TLBEHI的自动更新}
+
+发生地址相关异常时，硬件自动将坏虚地址记录到BADV寄存器，并将虚地址的高位记录到TLBEHI的VPPN域。
+
+\begin{lstlisting}[language=Verilog, caption=BADV和TLBEHI的异常更新]
+// In WB stage, detect address-related exceptions
+wire badv_ex = wb_ex && (
+    wb_ecode == `ECODE_ADEF ||  // Address error on fetch
+    wb_ecode == `ECODE_ALE  ||  // Address error on load/store
+    wb_ecode == `ECODE_PIL  ||  // Page invalid on load
+    wb_ecode == `ECODE_PIS  ||  // Page invalid on store
+    wb_ecode == `ECODE_PIF  ||  // Page invalid on fetch
+    wb_ecode == `ECODE_PME  ||  // Page modification
+    wb_ecode == `ECODE_PPI  ||  // Privilege not sufficient
+    wb_ecode == `ECODE_TLBR     // TLB refill
+);
+
+always @(posedge clk) begin
+    if (badv_ex) begin
+        // Update BADV with bad virtual address
+        csr_badv <= badv_wdata;
+        
+        // Update TLBEHI VPPN with virtual page number
+        csr_tlbehi[`CSR_TLBEHI_VPPN] <= badv_wdata[31:13];
+    end
+end
+\end{lstlisting}
+
+关键点：
+
+\begin{enumerate}
+    \item \textbf{准确的坏地址捕获}：对于load/store指令，坏地址应该是计算出的访存虚地址；对于取指，应该是取指请求的虚地址。
+    
+    \item \textbf{VPPN自动提取}：硬件从坏地址的[31:13]位自动提取虚拟页号，无需软件干预。
+    
+    \item \textbf{异常优先级}：多个异常可能同时触发时，按照优先级择一处理。
+\end{enumerate}
+
+\textbf{TLB重填异常的特殊处理}
+
+TLB重填异常有特殊的处理流程：
+
+\begin{enumerate}
+    \item \textbf{自动进入直接翻译模式}：触发TLB重填异常时，硬件自动将CSR.CRMD的DA置1、PG置0，进入直接地址翻译模式。这样异常处理程序自身的虚实转换就不会再触发TLB异常。
+    
+    \item \textbf{独立的异常入口}：TLB重填异常的入口地址由CSR.TLBRENTRY指定，不是CSR.EENTRY。
+    
+    \item \textbf{硬件TLB填充}：异常处理程序通过软件页表遍历找到对应页表项，写入TLBEHI、TLBELO0、TLBELO1和TLBIDX寄存器，然后执行TLBFILL或TLBWR指令将其写入TLB。
+\end{enumerate}
+
+\begin{lstlisting}[language=Verilog, caption=TLB重填异常处理]
+always @(posedge clk) begin
+    if (rst) begin
+        csr_crmd[`CSR_CRMD_DA] <= 1'b1;
+        csr_crmd[`CSR_CRMD_PG] <= 1'b0;
+    end
+    else if (wb_ex && wb_ecode == `ECODE_TLBR) begin
+        // Entering TLB refill exception
+        // Automatically switch to direct translation
+        csr_crmd[`CSR_CRMD_DA] <= 1'b1;
+        csr_crmd[`CSR_CRMD_PG] <= 1'b0;
+        
+        // Set exception state for TLBFILL/TLBWR to recognize
+        csr_estat[`CSR_ESTAT_ECODE] <= `ECODE_TLBR;
+    end
+    else if (ertn_inst && csr_estat[`CSR_ESTAT_ECODE] == `ECODE_TLBR) begin
+        // Exiting TLB refill exception
+        // Restore mapped translation mode
+        csr_crmd[`CSR_CRMD_DA] <= 1'b0;
+        csr_crmd[`CSR_CRMD_PG] <= 1'b1;
+    end
+end
+\end{lstlisting}
+
+\subsubsection{流水线中的集成}
+
+\textbf{取指阶段的地址转换}
+
+在Pre-IF级进行取指虚实地址转换：
+
+\begin{enumerate}
+    \item nextPC经过三级地址翻译得到物理PC
+    \item 同时进行异常检测，生成取指异常标志
+    \item 将异常信息和物理地址送往IF级
+\end{enumerate}
+
+\begin{lstlisting}[language=Verilog, caption=取指地址转换集成]
+// Pre-IF stage: address translation for next PC
+wire [31:0] nextpc_pa;
+wire if_tlb_excep;
+
+// Perform address translation
+mmu_inst_translate(
+    .vaddr(nextpc),
+    .crmd_da(crmd_da),
+    .crmd_pg(crmd_pg),
+    .crmd_plv(crmd_plv),
+    .dmw0(csr_dmw0),
+    .dmw1(csr_dmw1),
+    .tlb_result(tlb_s0_result),  // TLB search port 0
+    
+    .paddr(nextpc_pa),
+    .excep(if_tlb_excep),
+    .excep_code(if_ecode)
+);
+
+// Use translated address for instruction fetch request
+assign inst_sram_addr = nextpc_pa;
+\end{lstlisting}
+
+\textbf{访存阶段的地址转换}
+
+在EX级进行load/store虚实地址转换：
+
+\begin{enumerate}
+    \item 计算得到的虚地址经过三级翻译得到物理地址
+    \item 同时进行异常检测
+    \item 将物理地址送往MEM级用于访存请求
+\end{enumerate}
+
+\begin{lstlisting}[language=Verilog, caption=访存地址转换集成]
+// EX stage: address translation for load/store
+wire [31:0] data_vaddr;  // Virtual address calculated in EX
+wire [31:0] data_paddr;
+wire mem_tlb_excep;
+
+// Perform address translation
+mmu_mem_translate(
+    .vaddr(data_vaddr),
+    .crmd_da(crmd_da),
+    .crmd_pg(crmd_pg),
+    .crmd_plv(crmd_plv),
+    .dmw0(csr_dmw0),
+    .dmw1(csr_dmw1),
+    .tlb_result(tlb_s1_result),  // TLB search port 1
+    
+    .paddr(data_paddr),
+    .excep(mem_tlb_excep),
+    .excep_code(mem_ecode)
+);
+
+// Only issue memory request if no exception
+assign mem_req_valid = valid && !mem_tlb_excep;
+assign data_sram_addr = data_paddr;
+\end{lstlisting}
+
+关键设计原则：
+
+\begin{enumerate}
+    \item \textbf{禁止发送非法地址}：若地址转换产生异常，不能将无意义的物理地址发往总线，防止系统行为不可控。
+    
+    \item \textbf{异常优先处理}：异常生成的指令不能产生任何执行效果，必须在WB级清空流水线并跳转到异常处理程序。
+    
+    \item \textbf{时序考虑}：地址转换逻辑会增加Pre-IF和EX级的组合逻辑延迟。可在后续优化中采用流水线化等手段改善。
+\end{enumerate}
+
+\subsubsection{重取指机制的完整流程}
+
+对于影响地址翻译的CSR修改或TLB修改，采用重取指机制：
+
+\begin{enumerate}
+    \item \textbf{设置重取指标志}：当WB级检测到需要重取指的指令时，设置全局重取指标志。
+    
+    \item \textbf{标记流水线指令}：ID级发现重取指标志置位时，将新取来的指令标记为"需要重取"。
+    
+    \item \textbf{处理重取指指令}：带有重取指标记的指令如同异常一样处理，在WB级时清空整个流水线。
+    
+    \item \textbf{重新取指}：清空流水线后，PC保持在重取指指令处，从该指令重新开始取指。
+\end{enumerate}
+
+% TODO: fill it with implementation details
+
+% \begin{lstlisting}[language=Verilog, caption=重取指机制的完整流程]
+% // WB stage: detect instructions needing refetch
+% wire wb_refetch_trigger = (wb_is_tlbwr | wb_is_tlbfill | wb_is_invtlb) |
+%                           (wb_csr_we & (
+%                               (csr_num == `CSR_CRMD) |
+%                               (csr_num == `CSR_DMWO) |
+%                               (csr_num == `CSR_DMW1) |
+%                               (csr_num == `CSR_ASID)
+%                           ));
+% 
+% // Set refetch flag
+% always @(posedge clk) begin
+%     if (rst || flush) begin
+%         refetch_flag <= 1'b0;
+%     end
+%     else if (wb_refetch_trigger) begin
+%         refetch_flag <= 1'b1;
+%     end
+%     else if (id_refetch_mark_set) begin
+%         // Keep flag until refetch instruction reaches WB
+%         refetch_flag <= refetch_flag;
+%     end
+% end
+% 
+% // ID stage: mark instruction with refetch flag
+% wire id_inst_refetch = refetch_flag;
+% 
+% // WB stage: process refetch instruction
+% if (id_inst_refetch) begin
+%     // Clear pipeline
+%     flush <= 1'b1;
+%     
+%     // Keep PC at refetch instruction for re-fetch
+%     nextpc = current_pc;
+%     
+%     // Clear refetch flag
+%     refetch_flag <= 1'b0;
+% end
+% \end{lstlisting}
+
+% \subsection{小结}
+% 
+% TLB虚实地址转换与异常支持的关键实现要点：
+% 
+% \begin{itemize}
+%     \item \textbf{三级翻译流程}：直接翻译 → DMW映射 → TLB映射，按优先级进行
+%     
+%     \item \textbf{并行异常检测}：在Pre-IF和EX级同时进行异常检测，及早发现问题
+%     
+%     \item \textbf{完善的CSR管理}：BADV、TLBEHI等CSR自动更新坏地址信息
+%     
+%     \item \textbf{特殊异常处理}：TLB重填异常自动进入直接翻译模式，有独立入口
+%     
+%     \item \textbf{重取指机制}：解决配置变更对流水线的影响
+% \end{itemize}

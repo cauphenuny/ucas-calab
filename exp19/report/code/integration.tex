@@ -1,0 +1,109 @@
+\subsection{CPU 虚实地址转换集成}
+
+根据龙芯架构规范，虚实地址翻译分为三个优先级：
+
+\subsubsection{第一级：直接地址翻译模式判断}
+
+当CSR.CRMD的DA=1、PG=0时，处理器处于直接地址翻译模式，虚地址直接映射到物理地址（仅取低位）。
+
+\begin{lstlisting}[language=Verilog, caption=直接地址翻译逻辑]
+// Direct translation mode: PA = VA[PALEN-1:0]
+if (crmd_da && !crmd_pg) begin
+    // Direct translation
+    translated_pa = vaddr[31:0];  // 32-bit PA
+    tlb_excep = 1'b0;
+end else begin
+    // Mapped translation mode: proceed to level 2
+    // ...
+end
+\end{lstlisting}
+
+\subsubsection{第二级：直接映射窗口(DMW)查询}
+
+在映射地址翻译模式下，先检查虚地址是否落在直接映射窗口(DMW0或DMW1)中。每个DMW窗口配置一个2$^{28}$字节的虚地址范围。
+
+\begin{lstlisting}[language=Verilog, caption=DMW地址翻译逻辑]
+// Check if virtual address matches DMW0 or DMW1
+wire dmw0_match = (vaddr[31:29] == csr_dmw0[31:29]) &&
+                  ((1'b1 << crmd_plv) & csr_dmw0[`CSR_DMW_PLVL]);
+wire dmw1_match = (vaddr[31:29] == csr_dmw1[31:29]) &&
+                  ((1'b1 << crmd_plv) & csr_dmw1[`CSR_DMW_PLVL]);
+
+if (dmw0_match) begin
+    // DMW0 hit: combine high bits from DMW0 with low bits from VA
+    translated_pa = {csr_dmw0[`CSR_DMW_PSEG], vaddr[27:0]};
+    mat_value = csr_dmw0[`CSR_DMW_MAT];
+    tlb_excep = 1'b0;
+end else if (dmw1_match) begin
+    // DMW1 hit: similar to DMW0
+    translated_pa = {csr_dmw1[`CSR_DMW_PSEG], vaddr[27:0]};
+    mat_value = csr_dmw1[`CSR_DMW_MAT];
+    tlb_excep = 1'b0;
+end else begin
+    // No DMW match: proceed to level 3 (TLB lookup)
+    // ...
+end
+\end{lstlisting}
+
+关键实现细节：
+
+\begin{enumerate}
+    \item \textbf{权限检查}：DMW中的PLVL位指定该窗口在哪些特权等级下可用，当前特权等级必须满足要求。
+    
+    \item \textbf{高位替换}：虚地址的[31:29]位用于匹配DMW的虚地址高位，匹配成功则将该虚地址的[27:0]位与DMW配置的物理段高位拼接生成物理地址。
+    
+    \item \textbf{存储访问类型}：DMW中的MAT域指定该窗口上访存操作的缓存属性（缓存还是非缓存）。
+\end{enumerate}
+
+\subsubsection{第三级：TLB查询与页表转换}
+
+若虚地址未落在直接映射窗口中，需要通过TLB进行查询。
+
+\begin{lstlisting}[language=Verilog, caption=TLB地址翻译逻辑]
+// TLB lookup
+if (tlb_hit) begin
+    // TLB hit: extract translation info from TLB entry
+    
+    // Determine which page (even or odd) based on bit 12
+    if (vaddr[12]) begin
+        // Odd page: use PPN1, PLV1, MAT1, V1, D1
+        translated_pa = {ppn1[19:0], vaddr[11:0]};
+        plv_value = plv1;
+        mat_value = mat1;
+        d_value = d1;
+        v_value = v1;
+    end else begin
+        // Even page: use PPN0, PLV0, MAT0, V0, D0
+        translated_pa = {ppn0[19:0], vaddr[11:0]};
+        plv_value = plv0;
+        mat_value = mat0;
+        d_value = d0;
+        v_value = v0;
+    end
+    
+    // Check page validity and permission
+    if (!v_value) begin
+        // Invalid page: generate page invalid exception
+        exception_type = EX_PIL;  // load invalid or similar
+    end else if (plv_value < crmd_plv) begin
+        // Privilege level not sufficient
+        exception_type = EX_PPI;  // privilege not match
+    end else if (is_store && !d_value) begin
+        // Store to read-only page
+        exception_type = EX_PME;  // page modify exception
+    end
+end else begin
+    // TLB miss: generate TLB refill exception
+    exception_type = EX_TLBR;
+end
+\end{lstlisting}
+
+TLB查询的关键点：
+
+\begin{enumerate}
+    \item \textbf{偶数/奇数页选择}：TLB中每项存储两个相邻页的转换信息。根据虚地址的bit12决定使用哪个页的信息。
+    
+    \item \textbf{权限检查}：TLB项的PLV域指定该页的最小特权等级，当前特权等级必须不低于此值。
+    
+    \item \textbf{脏位检查}：Store操作时，若D位为0，表示页面为只读，需要触发页修改异常(PME)。
+\end{enumerate}
