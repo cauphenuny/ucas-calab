@@ -9,8 +9,17 @@ add_files -quiet [glob -nocomplain ../rtl/xilinx_ip/*.xci]
 # Add simulation files
 add_files -fileset sim_1 ../testbench
 
-# Add cache.v
-add_files -quiet -scan_for_includes ../../../myCPU/cache.v
+# Add source files
+set mycpu_sv_files [glob -nocomplain ../myCPU/*.sv]
+if {[llength $mycpu_sv_files] > 0} {
+	add_files -quiet -scan_for_includes $mycpu_sv_files
+	set_property file_type {SystemVerilog} [get_files $mycpu_sv_files]
+}
+
+set mycpu_v_files [glob -nocomplain ../myCPU/*.v]
+if {[llength $mycpu_v_files] > 0} {
+	add_files -quiet -scan_for_includes $mycpu_v_files
+}
 
 # Add constraints
 add_files -fileset constrs_1 -quiet ./constraints

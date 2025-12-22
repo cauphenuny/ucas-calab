@@ -22,13 +22,14 @@ module cache #(
     input  wire         rd_rdy,
 
     input  wire         ret_valid,
-    input  wire [ 1:0]  ret_last, // TODO: why width = 2?
+    input  wire         ret_last,
     input  wire [31:0]  ret_data,
 
     output reg          wr_req,
     output wire [ 2:0]  wr_type, // 3'b000: byte, 3'b001: half, 3'b010: word, 3'b100: cache line
     output wire [31:0]  wr_addr,
     output wire [127:0] wr_data,
+    output wire [3:0]   wr_wstrb,
     input  wire         wr_rdy
 );
 
@@ -141,6 +142,7 @@ wire replace_dirty;
 
 /***************** ADDRESS DECODE *****************/
 
+wire [WIDTH_BANK-1:0] bank = offset[WIDTH_BANK+1:2];
 wire [WIDTH_BANK-1:0] buf_bank = buf_offset[WIDTH_BANK+1:2];
 
 // effective address that without bank-offset
@@ -181,13 +183,10 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
     // Tag+Valid RAM
     wire [WIDTH_TAG-1:0] rtag, wtag;
     wire rvalid, wvalid;
-    wire [WIDTH_INDEX-1:0] tagv_index;
     wire tagv_wen, tagv_en;
 
     assign wtag = buf_tag;
     assign wvalid = 1'b1;
-    assign tagv_index = {WIDTH_INDEX{is_lookup}} & buf_index
-                      | {WIDTH_INDEX{is_refill | is_replace}} & buf_index;
     assign tagv_wen = is_refill && (replace_way[i]);
     assign tagv_en = is_lookup
                    | (is_replace && (replace_way[i]))
@@ -203,7 +202,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         .clka(clk),
         .ena(1'b1),
         .wea(tagv_wen),
-        .addra(tagv_index),
+        .addra(buf_index),
         .dina({wtag, wvalid}),
         .douta({rtag, rvalid})
     );
@@ -211,7 +210,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
 
     wire [31:0] bank_rdata_array[NUM_BANKS-1:0];
 
-    for (j = 0; j < NUM_BANKS; j = j + 1) begin : bank
+    for (j = 0; j < NUM_BANKS; j = j + 1) begin : gen_bank
         // Bank RAM
         wire en;
         wire [3:0] data_wstrb;
@@ -229,13 +228,25 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         );
         /* verilator lint_on MODMISSING */
 
-        assign en = (is_lookup && (buf_bank == j))
-                  | (is_hitwrite && (wrbuf_way[i]) && (wrbuf_bank == j))
-                  | (is_replace && (replace_way[i]))
-                  | (is_refill && (replace_way[i]));
+        wire bank_lookup = is_lookup && (bank == j);
+        wire bank_hitwrite = is_hitwrite && (wrbuf_way[i]) && (wrbuf_bank == j);
+        wire bank_replace = is_replace && (replace_way[i]); // replace: replace all banks
+        wire bank_refill = is_refill && (replace_way[i]);
 
-        wire write_hit = is_hitwrite && (wrbuf_way[i]) && (wrbuf_bank == j);
-        wire write_ref = is_refill && (replace_way[i]) && (rpbuf_numrecv == j) && ret_valid;
+        always @(posedge clk) begin
+            if (resetn) begin
+                assert ($countones({bank_lookup, bank_hitwrite, bank_replace, bank_refill}) <= 1)
+                else $fatal("Assertion failed: multiple state in one bank");
+            end
+        end
+
+        assign en = bank_lookup
+                  | bank_hitwrite
+                  | bank_replace
+                  | bank_refill;
+
+        wire write_hit = bank_hitwrite;
+        wire write_ref = bank_refill && (rpbuf_numrecv == j) && ret_valid;
 
         wire refill_matchstore = (buf_bank == j) && buf_isstore; // Refill + Store: write combined data
 
@@ -257,9 +268,9 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         assign data_wdata = {32{write_hit}} & wrbuf_wdata
                           | {32{write_ref}} & refill_data;
 
-        assign data_index = {WIDTH_INDEX{is_lookup}} & buf_index
-                          | {WIDTH_INDEX{is_hitwrite}} & wrbuf_index
-                          | {WIDTH_INDEX{is_replace || is_refill}} & buf_index;
+        assign data_index = {WIDTH_INDEX{bank_lookup}} & index
+                          | {WIDTH_INDEX{bank_hitwrite}} & wrbuf_index
+                          | {WIDTH_INDEX{bank_replace | bank_refill}} & buf_index;
 
         assign way_lines[i][j*32 +: 32] = data_rdata;
 
@@ -322,19 +333,18 @@ selector #(
     .out(replace_dirty)
 );
 
-wire need_replace = replace_valid && replace_dirty;
+wire need_writeback = replace_valid && replace_dirty;
 
 /***************** PROCESSING *****************/
 
 wire hit = |hit_way;
 
 // effective addr (ignore address inside bank)
-wire [1:0] next_bank = offset[3:2];
-wire [31-2:0] next_addr_eff = {tag, index, next_bank};
+wire [31-2:0] next_addr_eff = {tag, index, bank};
 wire next_isload = valid & ~op;
 
 wire write_conflict = (main_state == MAIN_LOOKUP) && buf_isstore && (req_addr_eff == next_addr_eff) && next_isload
-                    | (wb_state == WB_WRITE) && (next_bank == wrbuf_bank) && next_isload; // FIXME: why not compare index too ?
+                    | (wb_state == WB_WRITE) && (bank == wrbuf_bank) && next_isload; // FIXME: why not compare index too ?
 
 // request buffer
 always @(posedge clk) begin
@@ -457,21 +467,21 @@ always @(*) begin
             end
         end
         MAIN_MISS: begin
-            if (need_replace && wr_rdy == 1'b0) begin
+            if (need_writeback && wr_rdy == 1'b0) begin
                 main_next_state = MAIN_MISS;
             end else begin
-                main_next_state = MAIN_REPLACE; // need replace even if need_replace == 0, to fetch new line
+                main_next_state = MAIN_REPLACE; // need replace even if need_writeback == 0, to fetch new line
             end
         end
         MAIN_REPLACE: begin
-            if (rd_rdy == 1'b0) begin
+            if (need_writeback && rd_rdy == 1'b0) begin
                 main_next_state = MAIN_REPLACE;
             end else begin
                 main_next_state = MAIN_REFILL;
             end
         end
         MAIN_REFILL: begin
-            if (ret_valid == 1'b1 && ret_last == 2'b1) begin
+            if (ret_valid == 1'b1 && ret_last == 1'b1) begin
                 main_next_state = MAIN_IDLE;
             end else begin
                 main_next_state = MAIN_REFILL;
@@ -518,8 +528,6 @@ always @(posedge clk) begin
     if (resetn) begin
         assert ($countones(hit_way) <= 1)
         else $fatal("Assertion failed: hit_way has more than one bit set");
-        assert ($countones({is_lookup, is_hitwrite, is_replace, is_refill}) <= 1)
-        else $fatal("Assertion failed: multiple state in one cycle");
     end
 end
 
@@ -541,7 +549,7 @@ always @(posedge clk) begin
     if (!resetn) begin
         wr_req <= 1'b0;
     end else begin
-        if (miss2repl && need_replace) begin
+        if (miss2repl && need_writeback) begin
             wr_req <= 1'b1;
         end else if (wr_rdy == 1'b1) begin
             wr_req <= 1'b0;
@@ -552,5 +560,6 @@ end
 assign wr_type = AXI_LINE;
 assign wr_addr = {rpbuf_tag, buf_index, {WIDTH_OFFSET{1'b0}}};
 assign wr_data = replace_line;
+assign wr_wstrb = 4'b1111;
 
 endmodule
