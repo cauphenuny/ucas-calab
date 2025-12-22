@@ -104,23 +104,25 @@ end
 
 /***************** BUFFERS *****************/
 
-// request buffer
-reg is_store;
-reg [WIDTH_TAG-1:0] addr_tag;
-reg [WIDTH_INDEX-1:0] addr_index;
-reg [WIDTH_OFFSET-1:0] addr_offset;
+// main buffer, a.k.a. request buffer
+reg buf_isstore;
+reg [WIDTH_TAG-1:0] buf_tag;
+reg [WIDTH_INDEX-1:0] buf_index;
+reg [WIDTH_OFFSET-1:0] buf_offset;
+reg [31:0] buf_wdata;
+reg [3:0] buf_wstrb;
 
 // write buffer
-reg [NUM_WAYS-1:0] write_way;
-reg [WIDTH_BANK-1:0] write_bank; // addr[3:2]
-reg [WIDTH_INDEX-1:0] write_index; // addr[11:4]
-reg [3:0] write_strb; // 4'h0 if no write
-reg [31:0] write_data;
+reg [NUM_WAYS-1:0] wrbuf_way;
+reg [WIDTH_BANK-1:0] wrbuf_bank; // addr[3:2]
+reg [WIDTH_INDEX-1:0] wrbuf_index; // addr[11:4]
+reg [3:0] wrbuf_wstrb; // 4'h0 if no write
+reg [31:0] wrbuf_wdata;
 
 // replace buffer
-reg [WIDTH_BANK-1:0] num_received; // receive new cache-line data from AXI
+reg [WIDTH_BANK-1:0] rpbuf_numrecv; // receive new cache-line data from AXI
+reg [WIDTH_TAG-1:0] rpbuf_tag;
 wire [NUM_WAYS-1:0] replace_way;
-reg [WIDTH_TAG-1:0] victim_tag;
 
 // combinational logic data
 wire [31:0] way_words[NUM_WAYS-1:0];
@@ -139,10 +141,10 @@ wire replace_dirty;
 
 /***************** ADDRESS DECODE *****************/
 
-wire [WIDTH_BANK-1:0] addr_bank = addr_offset[WIDTH_BANK+1:2];
+wire [WIDTH_BANK-1:0] buf_bank = buf_offset[WIDTH_BANK+1:2];
 
 // effective address that without bank-offset
-wire [31-2:0] addr_eff = {addr_tag, addr_index, addr_bank};
+wire [31-2:0] req_addr_eff = {buf_tag, buf_index, buf_bank};
 
 wire is_lookup, is_hitwrite, is_replace, is_refill;
 
@@ -154,7 +156,7 @@ wire [NUM_BANKS-1:0] hit_bank;
 decoder #(
     .WIDTH(WIDTH_BANK)
 ) bank_decoder (
-    .in(addr_bank),
+    .in(buf_bank),
     .out(hit_bank)
 );
 
@@ -167,9 +169,9 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         always @(posedge clk) begin
             if (!resetn) begin
                 dirty[j] <= 1'b0;
-            end else if (is_hitwrite && write_way[i] && write_index == j) begin
+            end else if (is_hitwrite && wrbuf_way[i] && wrbuf_index == j) begin
                 dirty[j] <= 1'b1;
-            end else if (is_refill && replace_way[i] && addr_index == j) begin
+            end else if (is_refill && replace_way[i] && buf_index == j) begin
                 dirty[j] <= 1'b0;
             end
         end
@@ -182,19 +184,19 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
     wire [WIDTH_INDEX-1:0] tagv_index;
     wire tagv_wen, tagv_en;
 
-    assign wtag = addr_tag;
+    assign wtag = buf_tag;
     assign wvalid = 1'b1;
-    assign tagv_index = {WIDTH_INDEX{is_lookup}} & addr_index
-                      | {WIDTH_INDEX{is_refill | is_replace}} & addr_index;
+    assign tagv_index = {WIDTH_INDEX{is_lookup}} & buf_index
+                      | {WIDTH_INDEX{is_refill | is_replace}} & buf_index;
     assign tagv_wen = is_refill && (replace_way[i]);
     assign tagv_en = is_lookup
                    | (is_replace && (replace_way[i]))
                    | (is_refill && (replace_way[i]));
 
-    assign hit_way[i] = rvalid && rtag == addr_tag;
+    assign hit_way[i] = rvalid && rtag == buf_tag;
     assign way_tags[i] = rtag;
     assign way_valids[i] = rvalid;
-    assign way_dirtys[i] = dirty[addr_index];
+    assign way_dirtys[i] = dirty[buf_index];
 
     /* verilator lint_off MODMISSING */
     cache_tagv_ram tagv_ram(
@@ -227,22 +229,37 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         );
         /* verilator lint_on MODMISSING */
 
-        assign en = (is_lookup && (addr_bank == j))
-                  | (is_hitwrite && (write_way[i]) && (write_bank == j))
+        assign en = (is_lookup && (buf_bank == j))
+                  | (is_hitwrite && (wrbuf_way[i]) && (wrbuf_bank == j))
                   | (is_replace && (replace_way[i]))
                   | (is_refill && (replace_way[i]));
 
-        wire write_hit = is_hitwrite && (write_way[i]) && (write_bank == j);
-        wire write_ref = is_refill && (replace_way[i]) && (num_received == j) && ret_valid;
+        wire write_hit = is_hitwrite && (wrbuf_way[i]) && (wrbuf_bank == j);
+        wire write_ref = is_refill && (replace_way[i]) && (rpbuf_numrecv == j) && ret_valid;
 
-        assign data_wstrb = {4{write_hit}} & write_strb
+        wire refill_matchstore = (buf_bank == j) && buf_isstore; // Refill + Store: write combined data
+
+        wire [3:0] refill_wstrb = refill_matchstore ? buf_wstrb : 4'b0000; // 1: use wdata, 0: use ret_data
+
+        wire [31:0] refill_mask = {
+            {8{refill_wstrb[3]}},
+            {8{refill_wstrb[2]}},
+            {8{refill_wstrb[1]}},
+            {8{refill_wstrb[0]}}
+        };
+
+        wire [31:0] refill_data = buf_wdata & refill_mask
+                                | ret_data & ~refill_mask;
+
+        assign data_wstrb = {4{write_hit}} & wrbuf_wstrb
                           | {4{write_ref}} & 4'b1111;
-        assign data_wdata = {32{write_hit}} & write_data
-                          | {32{write_ref}} & ret_data;
 
-        assign data_index = {WIDTH_INDEX{is_lookup}} & addr_index
-                          | {WIDTH_INDEX{is_hitwrite}} & write_index
-                          | {WIDTH_INDEX{is_replace || is_refill}} & addr_index;
+        assign data_wdata = {32{write_hit}} & wrbuf_wdata
+                          | {32{write_ref}} & refill_data;
+
+        assign data_index = {WIDTH_INDEX{is_lookup}} & buf_index
+                          | {WIDTH_INDEX{is_hitwrite}} & wrbuf_index
+                          | {WIDTH_INDEX{is_replace || is_refill}} & buf_index;
 
         assign way_lines[i][j*32 +: 32] = data_rdata;
 
@@ -311,28 +328,31 @@ wire need_replace = replace_valid && replace_dirty;
 
 wire hit = |hit_way;
 
-wire load_req = valid & ~op;
-
 // effective addr (ignore address inside bank)
-wire [1:0] bank = offset[3:2];
-wire [31-2:0] req_addr_eff = {tag, index, bank};
+wire [1:0] next_bank = offset[3:2];
+wire [31-2:0] next_addr_eff = {tag, index, next_bank};
+wire next_isload = valid & ~op;
 
-wire write_conflict = (main_state == MAIN_LOOKUP) && is_store && (req_addr_eff == addr_eff) && load_req
-                    | (wb_state == WB_WRITE) && (bank == write_bank) && load_req; // FIXME: why not compare index too ?
+wire write_conflict = (main_state == MAIN_LOOKUP) && buf_isstore && (req_addr_eff == next_addr_eff) && next_isload
+                    | (wb_state == WB_WRITE) && (next_bank == wrbuf_bank) && next_isload; // FIXME: why not compare index too ?
 
 // request buffer
 always @(posedge clk) begin
     if (!resetn) begin
-        is_store <= 1'b0;
-        addr_tag <= {WIDTH_TAG{1'b0}};
-        addr_index <= {WIDTH_INDEX{1'b0}};
-        addr_offset <= {WIDTH_OFFSET{1'b0}};
+        buf_isstore <= 1'b0;
+        buf_tag <= {WIDTH_TAG{1'b0}};
+        buf_index <= {WIDTH_INDEX{1'b0}};
+        buf_offset <= {WIDTH_OFFSET{1'b0}};
+        buf_wdata <= 32'h0;
+        buf_wstrb <= 4'h0;
     end else begin
         if (main_next_state == MAIN_LOOKUP) begin
-            is_store <= op;
-            addr_tag <= tag;
-            addr_index <= index;
-            addr_offset <= offset;
+            buf_isstore <= op;
+            buf_tag <= tag;
+            buf_index <= index;
+            buf_offset <= offset;
+            buf_wdata <= wdata;
+            buf_wstrb <= wstrb;
         end
     end
 end
@@ -340,31 +360,30 @@ end
 // write buffer
 always @(posedge clk) begin
     if (!resetn) begin
-        write_way <= {NUM_WAYS{1'b0}};
-        write_bank <= {WIDTH_BANK{1'b0}};
-        write_index <= {WIDTH_INDEX{1'b0}};
-        write_strb <= 4'b0000;
-        write_data <= 32'b0;
+        wrbuf_way <= {NUM_WAYS{1'b0}};
+        wrbuf_bank <= {WIDTH_BANK{1'b0}};
+        wrbuf_index <= {WIDTH_INDEX{1'b0}};
+        wrbuf_wstrb <= 4'b0000;
+        wrbuf_wdata <= 32'b0;
     end else begin
         if (wb_next_state == WB_WRITE) begin
-            write_way <= hit_way;
-            write_bank <= addr_bank;
-            write_index <= addr_index;
-            write_strb <= wstrb;
-            write_data <= wdata;
+            wrbuf_way <= hit_way;
+            wrbuf_bank <= buf_bank;
+            wrbuf_index <= buf_index;
+            wrbuf_wstrb <= wstrb;
+            wrbuf_wdata <= wdata;
         end
     end
 end
 
-
 // replace buffer
 always @(posedge clk) begin
     if (!resetn) begin
-        num_received <= 0;
+        rpbuf_numrecv <= 0;
     end else if (repl2ref) begin
-        num_received <= 0;
+        rpbuf_numrecv <= 0;
     end else if (is_refill && ret_valid) begin
-        num_received <= num_received + 1;
+        rpbuf_numrecv <= rpbuf_numrecv + 1;
     end
 end
 
@@ -373,10 +392,10 @@ wire repl2ref = main_state == MAIN_REPLACE && main_next_state == MAIN_REFILL;
 
 always @(posedge clk) begin
     if (!resetn) begin
-        victim_tag <= {WIDTH_TAG{1'b0}};
+        rpbuf_tag <= {WIDTH_TAG{1'b0}};
     end else begin
         if (miss2repl) begin
-            victim_tag <= replace_tag;
+            rpbuf_tag <= replace_tag;
         end
     end
 end
@@ -467,14 +486,14 @@ end
 always @(*) begin
     case (wb_state)
         WB_IDLE: begin
-            if (main_state == MAIN_LOOKUP && is_store && hit) begin
+            if (main_state == MAIN_LOOKUP && buf_isstore && hit) begin
                 wb_next_state = WB_WRITE;
             end else begin
                 wb_next_state = WB_IDLE;
             end
         end
         WB_WRITE: begin
-            if (main_state == MAIN_LOOKUP && is_store && hit) begin
+            if (main_state == MAIN_LOOKUP && buf_isstore && hit) begin
                 wb_next_state = WB_WRITE;
             end else begin
                 wb_next_state = WB_IDLE;
@@ -511,12 +530,12 @@ assign addr_ok = (main_state == MAIN_IDLE)
 
 assign rdata = hit_word;
 assign data_ok = (main_state == MAIN_LOOKUP && hit)
-               | (main_state == MAIN_LOOKUP && is_store)
-               | (main_state == MAIN_REFILL && ret_valid == 1'b1 && num_received == addr_bank);
+               | (main_state == MAIN_LOOKUP && buf_isstore)
+               | (main_state == MAIN_REFILL && ret_valid == 1'b1 && rpbuf_numrecv == buf_bank);
 
 assign rd_type = AXI_LINE;
 assign rd_req = (main_state == MAIN_REPLACE);
-assign rd_addr = {addr_tag, addr_index, {WIDTH_OFFSET{1'b0}}};
+assign rd_addr = {buf_tag, buf_index, {WIDTH_OFFSET{1'b0}}};
 
 always @(posedge clk) begin
     if (!resetn) begin
@@ -531,7 +550,7 @@ always @(posedge clk) begin
 end
 
 assign wr_type = AXI_LINE;
-assign wr_addr = {victim_tag, addr_index, {WIDTH_OFFSET{1'b0}}};
+assign wr_addr = {rpbuf_tag, buf_index, {WIDTH_OFFSET{1'b0}}};
 assign wr_data = replace_line;
 
 endmodule
