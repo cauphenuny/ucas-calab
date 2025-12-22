@@ -69,13 +69,6 @@ module sram_axi_bridge (
         output reg         bready
 );
 
-    reg        inst_rd_pending;
-    reg [31:0] inst_rd_addr;
-    reg [ 1:0] inst_rd_size;
-    reg        data_rd_pending;
-    reg [31:0] data_rd_addr;
-    reg [ 1:0] data_rd_size;
-
     reg inst_rd_ongoing;
     reg data_rd_ongoing;
 
@@ -86,58 +79,189 @@ module sram_axi_bridge (
     reg [31:0] wr_wdata;
     reg [ 3:0] wr_wstrb;
 
-    reg        inst_rbuf_valid;
-    reg [31:0] inst_rbuf_data;
-    reg        data_rbuf_valid;
-    reg [31:0] data_rbuf_data;
+    localparam [1:0] STATE_AR_IDLE = 2'b00,
+                     STATE_AR_DATA = 2'b01,
+                     STATE_AR_INST = 2'b10;
+    reg [1:0] ar_state, ar_next;
 
-    localparam [0:0] STATE_AR_IDLE = 1'b0, STATE_AR_SEND = 1'b1;
-    reg ar_state;
+    localparam  STATE_WR_IDLE = 1'b0,
+                STATE_WR_SEND = 1'b1;
+    reg wr_state, wr_next;
 
-    localparam [0:0] STATE_WR_IDLE = 1'b0, STATE_WR_SEND = 1'b1;
-    reg [0:0] wr_state;
     reg       aw_inflight; // awvalid 尚未完成握手
     reg       w_inflight;  // wvalid 尚未完成握手
 
-    localparam [0:0] STATE_B_IDLE = 1'b0, STATE_B_WAIT = 1'b1;
-    reg b_state;
+    localparam  STATE_B_IDLE = 1'b0,
+                STATE_B_WAIT = 1'b1;
+    reg b_state, b_next;
 
     always @(posedge aclk) begin
-        if (!aresetn) begin
-            inst_rd_pending <= 1'b0;
-            data_rd_pending <= 1'b0;
-            inst_rd_ongoing <= 1'b0;
-            data_rd_ongoing <= 1'b0;
-            wr_pending      <= 1'b0;
-
-            // 读缓存/类SRAM握手
-            inst_rbuf_valid <= 1'b0;
-            inst_rbuf_data  <= 32'h0;
-            data_rbuf_valid <= 1'b0;
-            data_rbuf_data  <= 32'h0;
-            inst_addr_ok    <= 1'b0;
-            inst_data_ok    <= 1'b0;
-            inst_rdata      <= 32'h0;
-            data_addr_ok    <= 1'b0;
-            data_data_ok    <= 1'b0;
-            data_rdata      <= 32'h0;
-
-            // 写请求暂存
-            wr_addr         <= 32'h0;
-            wr_size         <= 2'b00;
-            wr_wdata        <= 32'h0;
-            wr_wstrb        <= 4'h0;
-
-            // AXI 读响应通道
-            rready  <= 1'b0; // 复位期 ready 非 X
-        end else begin
+        if (!aresetn) ;
+        else begin
             inst_addr_ok <= 1'b0;
             inst_data_ok <= 1'b0;
             data_addr_ok <= 1'b0;
             data_data_ok <= 1'b0;
-            inst_rbuf_valid <= 1'b0;
-            data_rbuf_valid <= 1'b0;
+        end
+    end
 
+    // AR 通道：仅驱动 AXI 读地址握手信号
+    always @(posedge aclk) begin
+        if (!aresetn)
+            ar_state <= STATE_AR_IDLE;
+        else
+            ar_state <= ar_next;
+    end
+
+    always @(posedge aclk) begin
+        if (!aresetn)
+            ar_next = STATE_AR_IDLE;
+        else begin
+            case (ar_state)
+                STATE_AR_IDLE:
+                    ar_next = (!wr_inflight) ? (
+                        (data_req && !data_wr && !data_rd_ongoing) ? STATE_AR_DATA :
+                        (inst_req && !inst_wr && !inst_rd_ongoing) ? STATE_AR_INST : STATE_AR_IDLE
+                    ) : STATE_AR_IDLE;
+                STATE_AR_DATA:
+                    ar_next = (arvalid && arready) ? STATE_AR_IDLE : STATE_AR_DATA;
+                STATE_AR_INST:
+                    ar_next = (arvalid && arready) ? STATE_AR_IDLE : STATE_AR_INST;
+                default:
+                    ar_next = STATE_AR_IDLE;
+            endcase
+        end
+    end
+
+    // ar_state 等于 arvalid
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            inst_rd_ongoing <= 1'b0;
+            data_rd_ongoing <= 1'b0;
+            inst_addr_ok    <= 1'b0;
+            data_addr_ok    <= 1'b0;
+            arvalid <= 1'b0;
+            araddr  <= 32'h0;
+            arsize  <= 3'b010;
+            arid    <= 4'd0;
+            arlen   <= 8'd0;
+            arburst <= 2'b01;
+            arlock  <= 2'b00;
+            arcache <= 4'b0000;
+            arprot  <= 3'b000;
+        end else begin
+            case (ar_state)
+                STATE_AR_IDLE: begin
+                    arvalid <= 1'b0;
+                    if (!wr_inflight) begin
+                        // 数据读优先：支持立即发起（同拍）或使用挂起
+                        if (data_req && !data_wr && !data_rd_ongoing) begin
+                            data_addr_ok <= 1'b1;
+                            araddr   <= data_addr;
+                            arsize   <= {1'b0, data_size};
+                            arid     <= 4'd1;
+                            arvalid  <= 1'b1;
+                        end else if (inst_req && !inst_wr && !inst_rd_ongoing) begin
+                            inst_addr_ok <= 1'b1;
+                            araddr   <= inst_addr;
+                            arsize   <= {1'b0, inst_size};
+                            arid     <= 4'd0;
+                            arvalid  <= 1'b1;
+                        end
+                    end
+                end
+                STATE_AR_DATA: begin
+                    if (arvalid && arready) begin
+                        data_rd_ongoing <= 1'b1;
+                        arvalid  <= 1'b0;
+                    end
+                end
+                STATE_AR_INST: begin
+                    if (arvalid && arready) begin
+                        inst_rd_ongoing <= 1'b1;
+                        arvalid  <= 1'b0;
+                    end
+                end
+                default:
+                    ;
+            endcase
+        end
+    end
+
+    // R 通道
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            // 读缓存/类SRAM握手
+            inst_data_ok    <= 1'b0;
+            inst_rdata      <= 32'h0;
+            data_data_ok    <= 1'b0;
+            data_rdata      <= 32'h0;
+            // AXI 读响应通道
+            rready  <= 1'b0; // 复位期 ready 非 X
+        end else begin
+
+            // rready 仅在任一读在途时拉高
+            rready <= (inst_rd_ongoing || data_rd_ongoing);
+
+            // R 响应：按 ID 分发，缓存并发出 data_ok 脉冲
+            if (rvalid && rready && rlast) begin
+                if (rid==4'd0) begin
+                    inst_rdata      <= rdata;
+                    inst_data_ok    <= 1'b1;
+                    inst_rd_ongoing <= 1'b0;
+                end else if (rid==4'd1) begin
+                    data_rdata      <= rdata;
+                    data_data_ok    <= 1'b1;
+                    data_rd_ongoing <= 1'b0;
+                end
+            end else
+            // B 响应到来（写完成）也需要对 data 端口发出 data_ok 脉冲
+            if (bvalid && wr_inflight) begin
+                inst_data_ok <= 1'b0;
+                data_data_ok <= 1'b1;
+            end else begin
+                inst_data_ok <= 1'b0;
+                data_data_ok <= 1'b0;
+            end
+        end
+    end
+
+    // 写通道（AW/W）
+    always @(posedge aclk) begin
+        if (!aresetn)
+            wr_state <= STATE_WR_IDLE;
+        else
+            wr_state <= wr_next;
+    end
+
+    always @(posedge aclk) begin
+        if (!aresetn)
+            wr_next = STATE_WR_IDLE;
+        else begin
+            case (wr_state)
+                STATE_WR_IDLE:
+                    wr_next = wr_pending ? STATE_WR_SEND : STATE_WR_IDLE;
+                STATE_WR_SEND:
+                    wr_next = (!aw_inflight && !w_inflight) ? STATE_WR_IDLE : STATE_WR_SEND;
+                default:
+                    wr_next = STATE_WR_IDLE;
+            endcase
+        end
+    end
+
+    // wr_state 差不多就是 aw_inflight || w_inflight
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            // 写请求暂存
+            wr_pending      <= 1'b0;
+            wr_addr         <= 32'h0;
+            wr_size         <= 2'b00;
+            wr_wdata        <= 32'h0;
+            wr_wstrb        <= 4'h0;
+        end else begin
             // 写请求接受：仅当无在途写，且写通道空闲
             if (data_req && data_wr && !wr_inflight
                 && (wr_state==STATE_WR_IDLE) && !wr_pending) begin
@@ -148,114 +272,13 @@ module sram_axi_bridge (
                 wr_wstrb     <= data_wstrb;
                 data_addr_ok <= 1'b1;
             end
-
-            // 读请求接受：无写在途（RAW 阻塞），各自仅 1 个 pending
-            if (!wr_inflight) begin
-                // 数据读优先
-                if (data_req && !data_wr && !data_rd_pending && !data_rd_ongoing) begin
-                    data_rd_pending <= 1'b1;
-                    data_rd_addr    <= data_addr;
-                    data_rd_size    <= data_size;
-                    data_addr_ok    <= 1'b1;
-                end else if (inst_req && !inst_wr && !inst_rd_pending && !inst_rd_ongoing) begin
-                    inst_rd_pending <= 1'b1;
-                    inst_rd_addr    <= inst_addr;
-                    inst_rd_size    <= inst_size;
-                    inst_addr_ok    <= 1'b1;
-                end
-            end
-
-            // AR 握手完成后，更新 pending/ongoing
-            if (arvalid && arready) begin
-                if (arid==4'd1) begin
-                    data_rd_pending <= 1'b0;
-                    data_rd_ongoing <= 1'b1;
-                end else begin
-                    inst_rd_pending <= 1'b0;
-                    inst_rd_ongoing <= 1'b1;
-                end
-            end
-
-            // rready 仅在任一读在途时拉高
-            rready <= (inst_rd_ongoing || data_rd_ongoing);
-
-            // R 响应：按 ID 分发，缓存并发出 data_ok 脉冲
-            if (rvalid && rready && rlast) begin
-                if (rid==4'd0) begin
-                    inst_rbuf_valid <= 1'b1;
-                    inst_rbuf_data  <= rdata;
-                    inst_rdata      <= rdata;
-                    inst_data_ok    <= 1'b1;
-                    inst_rd_ongoing <= 1'b0;
-                end else if (rid==4'd1) begin
-                    data_rbuf_valid <= 1'b1;
-                    data_rbuf_data  <= rdata;
-                    data_rdata      <= rdata;
-                    data_data_ok    <= 1'b1;
-                    data_rd_ongoing <= 1'b0;
-                end
-            end
-
-            // B 响应到来（写完成）也需要对 data 端口发出 data_ok 脉冲
-            if (bvalid && wr_inflight) begin
-                data_data_ok <= 1'b1;
-            end
-
+            
             if (wr_state==STATE_WR_IDLE && wr_pending) begin
                 wr_pending <= 1'b0;
             end
         end
     end
 
-    // AR 通道：仅驱动 AXI 读地址握手信号
-    always @(posedge aclk) begin
-        if (!aresetn) begin
-            arvalid <= 1'b0;
-            araddr  <= 32'h0;
-            arsize  <= 3'b010;
-            arid    <= 4'd0;
-            arlen   <= 8'd0;
-            arburst <= 2'b01;
-            arlock  <= 2'b00;
-            arcache <= 4'b0000;
-            arprot  <= 3'b000;
-            ar_state<= STATE_AR_IDLE;
-        end else begin
-            case (ar_state)
-                STATE_AR_IDLE: begin
-                    arvalid <= 1'b0;
-                    if (!wr_inflight) begin
-                        // 数据读优先：支持立即发起（同拍）或使用挂起
-                        if (data_rd_pending || (data_req && !data_wr && !data_rd_ongoing)) begin
-                            araddr   <= data_rd_pending ? data_rd_addr : data_addr;
-                            arsize   <= data_rd_pending ? {1'b0, data_rd_size} : {1'b0, data_size};
-                            arid     <= 4'd1;
-                            arvalid  <= 1'b1;
-                            ar_state <= STATE_AR_SEND;
-                        end else if (inst_rd_pending ||
-                                     (inst_req && !inst_wr && !inst_rd_ongoing)) begin
-                            araddr   <= inst_rd_pending ? inst_rd_addr : inst_addr;
-                            arsize   <= inst_rd_pending ? {1'b0, inst_rd_size} : {1'b0, inst_size};
-                            arid     <= 4'd0;
-                            arvalid  <= 1'b1;
-                            ar_state <= STATE_AR_SEND;
-                        end
-                    end
-                end
-                STATE_AR_SEND: begin
-                    if (arvalid && arready) begin
-                        arvalid  <= 1'b0;
-                        ar_state <= STATE_AR_IDLE;
-                    end
-                end
-                default: begin
-                    ar_state <= STATE_AR_IDLE;
-                end
-            endcase
-        end
-    end
-
-    // 写通道（AW/W）与写响应通道（B）
     always @(posedge aclk) begin
         if (!aresetn) begin
             // AXI 写地址/数据通道
@@ -273,24 +296,15 @@ module sram_axi_bridge (
             wdata   <= 32'h0;
             wstrb   <= 4'h0;
             wlast   <= 1'b1;
-            wr_state    <= STATE_WR_IDLE;
             aw_inflight <= 1'b0;
             w_inflight  <= 1'b0;
             wr_inflight <= 1'b0;
-
-            // AXI 写响应通道
-            bready  <= 1'b0; // 复位期 ready 非 X
-            b_state <= STATE_B_IDLE;
 
         end else begin
             // AW/W：同步驱动 awvalid/wvalid，保持到握手
             // 两个通道独立握手，均完成后结束本次发送
             case (wr_state)
                 STATE_WR_IDLE: begin
-                    awvalid     <= 1'b0;
-                    wvalid      <= 1'b0;
-                    aw_inflight <= 1'b0;
-                    w_inflight  <= 1'b0;
                     if (wr_pending) begin
                         awaddr      <= wr_addr;
                         awsize      <= {1'b0, wr_size};
@@ -303,7 +317,6 @@ module sram_axi_bridge (
                         aw_inflight <= 1'b1;
                         w_inflight  <= 1'b1;
                         wr_inflight <= 1'b1;
-                        wr_state    <= STATE_WR_SEND;
                     end
                 end
                 STATE_WR_SEND: begin
@@ -315,34 +328,59 @@ module sram_axi_bridge (
                         wvalid     <= 1'b0;
                         w_inflight <= 1'b0;
                     end
-                    if (!aw_inflight && !w_inflight) begin
-                        wr_state <= STATE_WR_IDLE;
-                    end
                 end
-                default: begin
-                    wr_state <= STATE_WR_IDLE;
-                end
+                default: ;
             endcase
 
+        end
+    end
+
+    // 写响应通道（B）
+
+    always @(posedge aclk) begin
+        if (!aresetn)
+            b_state <= STATE_B_IDLE;
+        else
+            b_state <= b_next;
+    end
+
+    always @(posedge aclk) begin
+        if (!aresetn)
+            b_next = STATE_B_IDLE;
+        else begin
+            case (b_state)
+                STATE_B_IDLE:
+                    b_next = wr_inflight ? STATE_B_WAIT : STATE_B_IDLE;
+                STATE_B_WAIT:
+                    b_next = bvalid ? STATE_B_IDLE : STATE_B_WAIT;
+                default:
+                    b_next = STATE_B_IDLE;
+            endcase
+        end
+    end
+
+    // b_state 差不多等于 wr_inflight，bready
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            // AXI 写响应通道
+            bready  <= 1'b0;
+        end else begin
             // B 响应：在写时保持 ready，接收响应
             case (b_state)
                 STATE_B_IDLE: begin
                     bready <= 1'b0;
                     if (wr_inflight) begin
                         bready  <= 1'b1;
-                        b_state <= STATE_B_WAIT;
                     end
                 end
                 STATE_B_WAIT: begin
                     bready <= 1'b1;
                     if (bvalid) begin
                         wr_inflight <= 1'b0;
-                        b_state     <= STATE_B_IDLE;
                     end
                 end
-                default: begin
-                    b_state <= STATE_B_IDLE;
-                end
+                default: ;
             endcase
         end
     end
