@@ -1,0 +1,60 @@
+\subsection{exp19}
+\subsubsection{CSR寄存器CRMD相关域的更新问题}
+
+仿真时发生CSR写错误。对于如下测试代码片段：
+
+\begin{lstlisting}
+1c06d7f8:	0382800c 	ori	$r12,$r0,0xa0
+1c06d7fc:	0386000d 	ori	$r13,$r0,0x180
+1c06d800:	040001ac 	csrxchg	$r12,$r13,0x0
+1c06d804:	03804c0c 	ori	$r12,$r0,0x13
+1c06d808:	03807c0d 	ori	$r13,$r0,0x1f
+1c06d80c:	040001ac 	csrxchg	$r12,$r13,0x0
+\end{lstlisting}
+
+一开始 0 号 CSR（即CRMD）的旧值为 0x08。这段代码首先将它修改为 0x88，然后又将它改为 0x9B；因此在第二个 csrxchg 处，寄存器 r12 中应该保存 CRMD 的旧值 0x88。但仿真得到的结果是 0x08。
+
+经过排查，发现问题不在于 exp19 对 CSR 相关逻辑的修改，而是 CRMD 本身的写入更新逻辑有问题。这段代码自从 exp12-13 之后就没有修改过，当时因为还没有实现MMU的全部功能，仅支持直接地址翻译模式，所以CRMD的DA、PG、DATF、DATM域可以暂时置为常值。而到了 exp19 显然就需要引入对这些域的更新，我们一开始忽略了这一点。
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    commentstyle=\color{gray},
+    keywordstyle=\color{blue},
+    stringstyle=\color{red},
+	morecomment=[f][\color{green}]{+},
+	morecomment=[f][\color{red}]{-},
+}
+
+\begin{lstlisting}[language=Verilog]
+    always @(posedge clk) begin
+        // unused fields
+-       csr_crmd[`CSR_CRMD_DATF] <= 2'b0;
+-       csr_crmd[`CSR_CRMD_DATM] <= 2'b0;
+        csr_crmd[`CSR_CRMD_WE]   <= 1'b0;
+        csr_crmd[`CSR_CRMD_ZERO] <= 22'b0;
+
+        // CRMD.PLV, CRMD.IE
+        if (rst) begin
+            csr_crmd[`CSR_CRMD_PLV] <= 2'b0;
+            csr_crmd[`CSR_CRMD_IE]  <= 1'b0;
+            csr_crmd[`CSR_CRMD_DA]  <= 1'b1;  // Direct translation mode on reset
+            csr_crmd[`CSR_CRMD_PG]  <= 1'b0;  // Mapped mode disabled on reset
++           csr_crmd[`CSR_CRMD_DATF] <= 2'b0;
++           csr_crmd[`CSR_CRMD_DATM] <= 2'b0;
+        end
+        else if (wb_ex) begin
+            // 略
+        end
+        else if (ertn_flush) begin
+            // 略
+        end
+        else if (csr_we && crmd_wsel) begin
+            csr_crmd[`CSR_CRMD_PLV] <= crmd_wdata[`CSR_CRMD_PLV];
+            csr_crmd[`CSR_CRMD_IE]  <= crmd_wdata[`CSR_CRMD_IE];
+            csr_crmd[`CSR_CRMD_DA]  <= crmd_wdata[`CSR_CRMD_DA];
+            csr_crmd[`CSR_CRMD_PG]  <= crmd_wdata[`CSR_CRMD_PG];
++           csr_crmd[`CSR_CRMD_DATF] <= crmd_wdata[`CSR_CRMD_DATF];
++           csr_crmd[`CSR_CRMD_DATM] <= crmd_wdata[`CSR_CRMD_DATM];
+        end
+    end
+\end{lstlisting}
