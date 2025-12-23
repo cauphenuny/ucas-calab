@@ -380,8 +380,8 @@ always @(posedge clk) begin
             wrbuf_way <= hit_way;
             wrbuf_bank <= buf_bank;
             wrbuf_index <= buf_index;
-            wrbuf_wstrb <= wstrb;
-            wrbuf_wdata <= wdata;
+            wrbuf_wstrb <= buf_wstrb;
+            wrbuf_wdata <= buf_wdata;
         end
     end
 end

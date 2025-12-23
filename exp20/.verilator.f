@@ -1,4 +1,6 @@
-./myCPU/cache.v
+./myCPU/cache.sv
+./myCPU/tools.sv
+./myCPU/tools.v
 ./rtl/cache_top.v
 ./rtl/xilinx_ip/cache_data_ram_1/sim/cache_data_ram.v
 ./rtl/xilinx_ip/cache_data_ram_1/simulation/blk_mem_gen_v8_4.v
