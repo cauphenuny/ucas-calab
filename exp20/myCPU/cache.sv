@@ -126,8 +126,11 @@ reg [WIDTH_TAG-1:0] rpbuf_tag;
 wire [NUM_WAYS-1:0] replace_way;
 
 // combinational logic data
-wire [31:0] way_words[NUM_WAYS-1:0];
+wire [31:0] way_hit_words[NUM_WAYS-1:0];
 wire [31:0] hit_word;
+
+wire [31:0] way_refill_words[NUM_WAYS-1:0];
+wire [31:0] refill_word;
 
 wire [WIDTH_CACHE-1:0] way_lines[NUM_WAYS-1:0];
 wire [WIDTH_CACHE-1:0] replace_line;
@@ -178,7 +181,6 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
             end
         end
     end
-    // TODO: skip replace when not dirty
 
     // Tag+Valid RAM
     wire [WIDTH_TAG-1:0] rtag, wtag;
@@ -209,6 +211,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
     /* verilator lint_on MODMISSING */
 
     wire [31:0] bank_rdata_array[NUM_BANKS-1:0];
+    wire [31:0] bank_refill_array[NUM_BANKS-1:0];
 
     for (j = 0; j < NUM_BANKS; j = j + 1) begin : gen_bank
         // Bank RAM
@@ -275,6 +278,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         assign way_lines[i][j*32 +: 32] = data_rdata;
 
         assign bank_rdata_array[j] = data_rdata;
+        assign bank_refill_array[j] = refill_data;
     end
 
     selector #(
@@ -283,7 +287,16 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
     ) bank_selector (
         .sel(hit_bank),
         .in(bank_rdata_array),
-        .out(way_words[i])
+        .out(way_hit_words[i])
+    );
+
+    selector #(
+        .DATA_WIDTH(32),
+        .SEL_NUM(NUM_BANKS)
+    ) bank_refill_selector (
+        .sel(hit_bank),
+        .in(bank_refill_array),
+        .out(way_refill_words[i])
     );
 end
 endgenerate
@@ -293,7 +306,7 @@ selector #(
     .SEL_NUM(NUM_WAYS)
 ) way_word_selector (
     .sel(hit_way),
-    .in(way_words),
+    .in(way_hit_words),
     .out(hit_word)
 );
 
@@ -331,6 +344,15 @@ selector #(
     .sel(replace_way),
     .in(way_dirtys),
     .out(replace_dirty)
+);
+
+selector #(
+    .DATA_WIDTH(32),
+    .SEL_NUM(NUM_WAYS)
+) way_refillword_selector (
+    .sel(replace_way),
+    .in(way_refill_words),
+    .out(refill_word)
 );
 
 wire need_writeback = replace_valid && replace_dirty;
@@ -537,10 +559,12 @@ end
 assign addr_ok = (main_state == MAIN_IDLE)
                | (main_state == MAIN_LOOKUP && main_next_state == MAIN_LOOKUP);
 
-assign rdata = hit_word;
+assign rdata = {32{main_state == MAIN_LOOKUP}} & hit_word
+             | {32{main_state == MAIN_REFILL}} & refill_word;
+
 assign data_ok = (main_state == MAIN_LOOKUP && hit)
                | (main_state == MAIN_LOOKUP && buf_isstore)
-               | (main_state == MAIN_REFILL && ret_valid == 1'b1 && rpbuf_numrecv == buf_bank);
+               | (main_state == MAIN_REFILL && ret_valid == 1'b1 && rpbuf_numrecv == buf_bank && ~buf_isstore);
 
 assign rd_type = AXI_LINE;
 assign rd_req = (main_state == MAIN_REPLACE);
