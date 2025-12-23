@@ -13,7 +13,7 @@ module sram_axi_bridge (
         input  wire [31:0] inst_addr,
         input  wire [ 3:0] inst_wstrb,
         input  wire [31:0] inst_wdata,
-        output reg         inst_addr_ok,
+        output wire        inst_addr_ok,
         output reg         inst_data_ok,
         output reg  [31:0] inst_rdata,
         // data sram side
@@ -23,7 +23,7 @@ module sram_axi_bridge (
         input  wire [31:0] data_addr,
         input  wire [ 3:0] data_wstrb,
         input  wire [31:0] data_wdata,
-        output reg         data_addr_ok,
+        output wire        data_addr_ok,
         output reg         data_data_ok,
         output reg  [31:0] data_rdata,
         // AXI read address
@@ -79,6 +79,15 @@ module sram_axi_bridge (
     reg [31:0] wr_wdata;
     reg [ 3:0] wr_wstrb;
 
+    reg inst_rd_addr_ok;
+    reg data_rd_addr_ok, data_wr_addr_ok;
+
+    assign inst_addr_ok = inst_rd_addr_ok;
+    assign data_addr_ok = data_rd_addr_ok || data_wr_addr_ok;
+
+    localparam [3:0] ID_INST = 4'd0,
+                     ID_DATA = 4'd1;
+
     localparam [1:0] STATE_AR_IDLE = 2'b00,
                      STATE_AR_DATA = 2'b01,
                      STATE_AR_INST = 2'b10;
@@ -98,9 +107,7 @@ module sram_axi_bridge (
     always @(posedge aclk) begin
         if (!aresetn) ;
         else begin
-            inst_addr_ok <= 1'b0;
             inst_data_ok <= 1'b0;
-            data_addr_ok <= 1'b0;
             data_data_ok <= 1'b0;
         end
     end
@@ -113,34 +120,28 @@ module sram_axi_bridge (
             ar_state <= ar_next;
     end
 
-    always @(posedge aclk) begin
-        if (!aresetn)
-            ar_next = STATE_AR_IDLE;
-        else begin
-            case (ar_state)
-                STATE_AR_IDLE:
-                    ar_next = (!wr_inflight) ? (
-                        (data_req && !data_wr && !data_rd_ongoing) ? STATE_AR_DATA :
-                        (inst_req && !inst_wr && !inst_rd_ongoing) ? STATE_AR_INST : STATE_AR_IDLE
-                    ) : STATE_AR_IDLE;
-                STATE_AR_DATA:
-                    ar_next = (arvalid && arready) ? STATE_AR_IDLE : STATE_AR_DATA;
-                STATE_AR_INST:
-                    ar_next = (arvalid && arready) ? STATE_AR_IDLE : STATE_AR_INST;
-                default:
-                    ar_next = STATE_AR_IDLE;
-            endcase
-        end
+    always @(*) begin
+        case (ar_state)
+            STATE_AR_IDLE:
+                ar_next = (!wr_inflight) ? (
+                    (data_req && !data_wr && !data_rd_ongoing) ? STATE_AR_DATA :
+                    (inst_req && !inst_wr && !inst_rd_ongoing) ? STATE_AR_INST : STATE_AR_IDLE
+                ) : STATE_AR_IDLE;
+            STATE_AR_DATA:
+                ar_next = (arvalid && arready) ? STATE_AR_IDLE : STATE_AR_DATA;
+            STATE_AR_INST:
+                ar_next = (arvalid && arready) ? STATE_AR_IDLE : STATE_AR_INST;
+            default:
+                ar_next = STATE_AR_IDLE;
+        endcase
     end
 
     // ar_state 等于 arvalid
 
     always @(posedge aclk) begin
         if (!aresetn) begin
-            inst_rd_ongoing <= 1'b0;
-            data_rd_ongoing <= 1'b0;
-            inst_addr_ok    <= 1'b0;
-            data_addr_ok    <= 1'b0;
+            inst_rd_addr_ok <= 1'b0;
+            data_rd_addr_ok <= 1'b0;
             arvalid <= 1'b0;
             araddr  <= 32'h0;
             arsize  <= 3'b010;
@@ -151,37 +152,32 @@ module sram_axi_bridge (
             arcache <= 4'b0000;
             arprot  <= 3'b000;
         end else begin
+            inst_rd_addr_ok <= 1'b0;
+            data_rd_addr_ok <= 1'b0;
             case (ar_state)
                 STATE_AR_IDLE: begin
                     arvalid <= 1'b0;
                     if (!wr_inflight) begin
                         // 数据读优先：支持立即发起（同拍）或使用挂起
                         if (data_req && !data_wr && !data_rd_ongoing) begin
-                            data_addr_ok <= 1'b1;
+                            data_rd_addr_ok <= 1'b1;
                             araddr   <= data_addr;
                             arsize   <= {1'b0, data_size};
-                            arid     <= 4'd1;
+                            arid     <= ID_DATA;
                             arvalid  <= 1'b1;
                         end else if (inst_req && !inst_wr && !inst_rd_ongoing) begin
-                            inst_addr_ok <= 1'b1;
+                            inst_rd_addr_ok <= 1'b1;
                             araddr   <= inst_addr;
                             arsize   <= {1'b0, inst_size};
-                            arid     <= 4'd0;
+                            arid     <= ID_INST;
                             arvalid  <= 1'b1;
                         end
                     end
                 end
-                STATE_AR_DATA: begin
-                    if (arvalid && arready) begin
-                        data_rd_ongoing <= 1'b1;
-                        arvalid  <= 1'b0;
-                    end
-                end
+                STATE_AR_DATA,
                 STATE_AR_INST: begin
-                    if (arvalid && arready) begin
-                        inst_rd_ongoing <= 1'b1;
+                    if (arvalid && arready)
                         arvalid  <= 1'b0;
-                    end
                 end
                 default:
                     ;
@@ -198,20 +194,28 @@ module sram_axi_bridge (
             inst_rdata      <= 32'h0;
             data_data_ok    <= 1'b0;
             data_rdata      <= 32'h0;
+            inst_rd_ongoing <= 1'b0;
+            data_rd_ongoing <= 1'b0;
             // AXI 读响应通道
             rready  <= 1'b0; // 复位期 ready 非 X
         end else begin
 
             // rready 仅在任一读在途时拉高
             rready <= (inst_rd_ongoing || data_rd_ongoing);
+            if (arvalid && arready) begin
+                if (arid == ID_INST)
+                    inst_rd_ongoing <= 1'b1;
+                else if (arid == ID_DATA)
+                    data_rd_ongoing <= 1'b1;
+            end
 
             // R 响应：按 ID 分发，缓存并发出 data_ok 脉冲
             if (rvalid && rready && rlast) begin
-                if (rid==4'd0) begin
+                if (rid == ID_INST) begin
                     inst_rdata      <= rdata;
                     inst_data_ok    <= 1'b1;
                     inst_rd_ongoing <= 1'b0;
-                end else if (rid==4'd1) begin
+                end else if (rid == ID_DATA) begin
                     data_rdata      <= rdata;
                     data_data_ok    <= 1'b1;
                     data_rd_ongoing <= 1'b0;
@@ -236,25 +240,22 @@ module sram_axi_bridge (
             wr_state <= wr_next;
     end
 
-    always @(posedge aclk) begin
-        if (!aresetn)
-            wr_next = STATE_WR_IDLE;
-        else begin
-            case (wr_state)
-                STATE_WR_IDLE:
-                    wr_next = wr_pending ? STATE_WR_SEND : STATE_WR_IDLE;
-                STATE_WR_SEND:
-                    wr_next = (!aw_inflight && !w_inflight) ? STATE_WR_IDLE : STATE_WR_SEND;
-                default:
-                    wr_next = STATE_WR_IDLE;
-            endcase
-        end
+    always @(*) begin
+        case (wr_state)
+            STATE_WR_IDLE:
+                wr_next = wr_pending ? STATE_WR_SEND : STATE_WR_IDLE;
+            STATE_WR_SEND:
+                wr_next = (!aw_inflight && !w_inflight) ? STATE_WR_IDLE : STATE_WR_SEND;
+            default:
+                wr_next = STATE_WR_IDLE;
+        endcase
     end
 
     // wr_state 差不多就是 aw_inflight || w_inflight
 
     always @(posedge aclk) begin
         if (!aresetn) begin
+            data_wr_addr_ok <= 1'b0;
             // 写请求暂存
             wr_pending      <= 1'b0;
             wr_addr         <= 32'h0;
@@ -262,6 +263,7 @@ module sram_axi_bridge (
             wr_wdata        <= 32'h0;
             wr_wstrb        <= 4'h0;
         end else begin
+            data_wr_addr_ok <= 1'b0;
             // 写请求接受：仅当无在途写，且写通道空闲
             if (data_req && data_wr && !wr_inflight
                 && (wr_state==STATE_WR_IDLE) && !wr_pending) begin
@@ -270,9 +272,9 @@ module sram_axi_bridge (
                 wr_size      <= data_size;
                 wr_wdata     <= data_wdata;
                 wr_wstrb     <= data_wstrb;
-                data_addr_ok <= 1'b1;
+                data_wr_addr_ok <= 1'b1;
             end
-            
+
             if (wr_state==STATE_WR_IDLE && wr_pending) begin
                 wr_pending <= 1'b0;
             end
@@ -285,14 +287,14 @@ module sram_axi_bridge (
             awvalid <= 1'b0;
             awaddr  <= 32'h0;
             awsize  <= 3'b010;
-            awid    <= 4'd1;
+            awid    <= ID_DATA;
             awlen   <= 8'd0;
             awburst <= 2'b01;
             awlock  <= 2'b00;
             awcache <= 4'b0000;
             awprot  <= 3'b000;
             wvalid  <= 1'b0;
-            wid     <= 4'd1;
+            wid     <= ID_DATA;
             wdata   <= 32'h0;
             wstrb   <= 4'h0;
             wlast   <= 1'b1;
@@ -308,7 +310,7 @@ module sram_axi_bridge (
                     if (wr_pending) begin
                         awaddr      <= wr_addr;
                         awsize      <= {1'b0, wr_size};
-                        awid        <= 4'd1;
+                        awid        <= ID_DATA;
                         wdata       <= wr_wdata;
                         wstrb       <= wr_wstrb;
                         wlast       <= 1'b1;
@@ -344,19 +346,15 @@ module sram_axi_bridge (
             b_state <= b_next;
     end
 
-    always @(posedge aclk) begin
-        if (!aresetn)
-            b_next = STATE_B_IDLE;
-        else begin
-            case (b_state)
-                STATE_B_IDLE:
-                    b_next = wr_inflight ? STATE_B_WAIT : STATE_B_IDLE;
-                STATE_B_WAIT:
-                    b_next = bvalid ? STATE_B_IDLE : STATE_B_WAIT;
-                default:
-                    b_next = STATE_B_IDLE;
-            endcase
-        end
+    always @(*) begin
+        case (b_state)
+            STATE_B_IDLE:
+                b_next = wr_inflight ? STATE_B_WAIT : STATE_B_IDLE;
+            STATE_B_WAIT:
+                b_next = bvalid ? STATE_B_IDLE : STATE_B_WAIT;
+            default:
+                b_next = STATE_B_IDLE;
+        endcase
     end
 
     // b_state 差不多等于 wr_inflight，bready
