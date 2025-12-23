@@ -399,6 +399,7 @@ end
 
 wire miss2repl = main_state == MAIN_MISS && main_next_state == MAIN_REPLACE;
 wire repl2ref = main_state == MAIN_REPLACE && main_next_state == MAIN_REFILL;
+wire lookup2miss = main_state == MAIN_LOOKUP && main_next_state == MAIN_MISS;
 
 always @(posedge clk) begin
     if (!resetn) begin
@@ -420,7 +421,7 @@ if (WIDTH_WAY == 1) begin : width1
     always @(posedge clk) begin
         if (!resetn)
             current_replace_way <= 1'b0;
-        else if (miss2repl)
+        else if (lookup2miss)
             current_replace_way <= ~current_replace_way;
     end
 end else begin : widthN
@@ -428,7 +429,7 @@ end else begin : widthN
     always @(posedge clk) begin
         if (!resetn)
             current_replace_way <= 'b1; // avoid all-zero lockup
-        else if (miss2repl)
+        else if (lookup2miss)
             current_replace_way <= {
                 current_replace_way[WIDTH_WAY-2:0],
                 ^current_replace_way
