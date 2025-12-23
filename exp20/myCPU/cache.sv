@@ -245,7 +245,6 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
 
         assign en = bank_lookup
                   | bank_hitwrite
-                  | bank_replace
                   | bank_refill;
 
         wire write_hit = bank_hitwrite;
@@ -497,7 +496,7 @@ always @(*) begin
             end
         end
         MAIN_REPLACE: begin
-            if (need_writeback && rd_rdy == 1'b0) begin
+            if (rd_rdy == 1'b0) begin
                 main_next_state = MAIN_REPLACE;
             end else begin
                 main_next_state = MAIN_REFILL;
@@ -540,7 +539,7 @@ end
 
 /***************** STATE SIGNALS *****************/
 
-assign is_lookup = (main_state == MAIN_LOOKUP);
+assign is_lookup = (main_next_state == MAIN_LOOKUP);
 assign is_hitwrite = (wb_state == WB_WRITE);
 assign is_replace = (main_state == MAIN_REPLACE);
 assign is_refill = (main_state == MAIN_REFILL);
