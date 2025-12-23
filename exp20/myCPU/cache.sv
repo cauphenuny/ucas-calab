@@ -231,7 +231,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         );
         /* verilator lint_on MODMISSING */
 
-        wire bank_lookup = is_lookup && (bank == j);
+        wire bank_lookup = is_lookup && (buf_bank == j);
         wire bank_hitwrite = is_hitwrite && (wrbuf_way[i]) && (wrbuf_bank == j);
         wire bank_replace = is_replace && (replace_way[i]); // replace: replace all banks
         wire bank_refill = is_refill && (replace_way[i]);
@@ -245,7 +245,6 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
 
         assign en = bank_lookup
                   | bank_hitwrite
-                  | bank_replace
                   | bank_refill;
 
         wire write_hit = bank_hitwrite;
@@ -271,7 +270,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         assign data_wdata = {32{write_hit}} & wrbuf_wdata
                           | {32{write_ref}} & refill_data;
 
-        assign data_index = {WIDTH_INDEX{bank_lookup}} & index
+        assign data_index = {WIDTH_INDEX{bank_lookup}} & buf_index
                           | {WIDTH_INDEX{bank_hitwrite}} & wrbuf_index
                           | {WIDTH_INDEX{bank_replace | bank_refill}} & buf_index;
 
@@ -366,7 +365,7 @@ wire [31-2:0] next_addr_eff = {tag, index, bank};
 wire next_isload = valid & ~op;
 
 wire write_conflict = (main_state == MAIN_LOOKUP) && buf_isstore && (req_addr_eff == next_addr_eff) && next_isload
-                    | (wb_state == WB_WRITE) && (bank == wrbuf_bank) && next_isload; // FIXME: why not compare index too ?
+                    | (wb_state == WB_WRITE) && (bank == wrbuf_bank) && next_isload;
 
 // request buffer
 always @(posedge clk) begin
@@ -497,7 +496,7 @@ always @(*) begin
             end
         end
         MAIN_REPLACE: begin
-            if (need_writeback && rd_rdy == 1'b0) begin
+            if (rd_rdy == 1'b0) begin
                 main_next_state = MAIN_REPLACE;
             end else begin
                 main_next_state = MAIN_REFILL;
@@ -540,7 +539,7 @@ end
 
 /***************** STATE SIGNALS *****************/
 
-assign is_lookup = (main_state == MAIN_LOOKUP);
+assign is_lookup = (main_next_state == MAIN_LOOKUP);
 assign is_hitwrite = (wb_state == WB_WRITE);
 assign is_replace = (main_state == MAIN_REPLACE);
 assign is_refill = (main_state == MAIN_REFILL);
