@@ -9,13 +9,13 @@
 \hline
 TLBIDX & CSR写、TLBSRCH、TLBRD & 无(只读部分) \\
 \hline
-TLBEHI & CSR写、异常、TLBRD & 重取指 \\
+TLBEHI & CSR写、异常、TLBRD & 无 \\
 \hline
 TLBELO0/1 & CSR写、TLBRD & 无 \\
 \hline
-ASID & CSR写、TLBRD & 重取指 \\
+ASID & CSR写、TLBRD & 无 \\
 \hline
-CRMD(DA/PG) & CSR写、异常 & 重取指、特殊处理 \\
+CRMD(DA/PG) & CSR写、异常 & 特殊处理 \\
 \hline
 TLBRENTRY & CSR写 & 无 \\
 \hline
@@ -284,5 +284,3 @@ end
 % \subsubsection{CSR冲突的整体处理}
 
 % CSR写后读冲突检测与处理见流水线集成章节
-
-% 重取指标志机制见流水线集成章节

@@ -11,11 +11,11 @@ TLBSRCH & EX & CSR读冲突用阻塞 & 查找结果在WB级写入CSR \\
 \hline
 TLBRD & WB & TLBIDX读冲突用阻塞 & 读出TLB项到CSR \\
 \hline
-TLBWR & WB & 写TLB用重取指 & 指定位置写入 \\
+TLBWR & WB & 写TLB需流水线刷新 & 指定位置写入 \\
 \hline
-TLBFILL & WB & 写TLB用重取指 & 随机位置写入 \\
+TLBFILL & WB & 写TLB需流水线刷新 & 随机位置写入 \\
 \hline
-INVTLB & EX & 写TLB用重取指 & 有选择无效项 \\
+INVTLB & EX & 写TLB需流水线刷新 & 有选择无效项 \\
 \hline
 \end{tabular}
 \end{table}
@@ -107,14 +107,6 @@ end
 
 % 相关修复见CSR寄存器章节
 
-\noindent\textbf{冲突处理}
-
-TLBRD指令更新CSR会引发两类冲突：
-
-\begin{enumerate}
-    % 写后读冲突与重取指机制见流水线集成章节
-\end{enumerate}
-
 \subsubsection{TLBWR指令的实现}
 
 TLBWR指令将CSR中的TLB表项信息写入TLB的指定项。被写入的表项信息来自CSR.TLBEHI、CSR.TLBELO0、CSR.TLBELO1和CSR.TLBIDX.PS，写入位置由CSR.TLBIDX的Index域指定。
@@ -124,7 +116,6 @@ TLBWR指令将CSR中的TLB表项信息写入TLB的指定项。被写入的表项
     
     \item \textbf{表项有效性判断}：若此时CSR.ESTAT.Ecode=0x3F（处于TLB重填异常处理中），则填入有效项；否则根据CSR.TLBIDX.NE位判断：NE=1时填入无效项，NE=0时填入有效项。
     
-    % 写后读冲突与重取指机制见流水线集成章节
 \end{enumerate}
 
 在csr.v中的TLBWR执行逻辑：
@@ -144,7 +135,6 @@ end else begin
 end
 \end{lstlisting}
 
-% 重取指机制见流水线集成章节
 
 \subsubsection{TLBFILL指令的实现}
 
@@ -276,4 +266,3 @@ tlb_instance(
 );
 \end{lstlisting}
 
-% INVTLB相关写后读冲突与重取指机制见流水线集成章节
