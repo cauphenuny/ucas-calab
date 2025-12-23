@@ -162,62 +162,6 @@ end
 
 % 流水线集成与虚实地址转换流程见integration.tex
 
-\subsubsection{重取指机制的完整流程}
-
-对于影响地址翻译的CSR修改或TLB修改，采用重取指机制：
-
-\begin{enumerate}
-    \item \textbf{设置重取指标志}：当WB级检测到需要重取指的指令时，设置全局重取指标志。
-    
-    \item \textbf{标记流水线指令}：ID级发现重取指标志置位时，将新取来的指令标记为"需要重取"。
-    
-    \item \textbf{处理重取指指令}：带有重取指标记的指令如同异常一样处理，在WB级时清空整个流水线。
-    
-    \item \textbf{重新取指}：清空流水线后，PC保持在重取指指令处，从该指令重新开始取指。
-\end{enumerate}
-
-% TODO: fill it with implementation details
-
-% \begin{lstlisting}[language=Verilog, caption=重取指机制的完整流程]
-% // WB stage: detect instructions needing refetch
-% wire wb_refetch_trigger = (wb_is_tlbwr | wb_is_tlbfill | wb_is_invtlb) |
-%                           (wb_csr_we & (
-%                               (csr_num == `CSR_CRMD) |
-%                               (csr_num == `CSR_DMWO) |
-%                               (csr_num == `CSR_DMW1) |
-%                               (csr_num == `CSR_ASID)
-%                           ));
-% 
-% // Set refetch flag
-% always @(posedge clk) begin
-%     if (rst || flush) begin
-%         refetch_flag <= 1'b0;
-%     end
-%     else if (wb_refetch_trigger) begin
-%         refetch_flag <= 1'b1;
-%     end
-%     else if (id_refetch_mark_set) begin
-%         // Keep flag until refetch instruction reaches WB
-%         refetch_flag <= refetch_flag;
-%     end
-% end
-% 
-% // ID stage: mark instruction with refetch flag
-% wire id_inst_refetch = refetch_flag;
-% 
-% // WB stage: process refetch instruction
-% if (id_inst_refetch) begin
-%     // Clear pipeline
-%     flush <= 1'b1;
-%     
-%     // Keep PC at refetch instruction for re-fetch
-%     nextpc = current_pc;
-%     
-%     // Clear refetch flag
-%     refetch_flag <= 1'b0;
-% end
-% \end{lstlisting}
-
 % \subsection{小结}
 % 
 % TLB虚实地址转换与异常支持的关键实现要点：
@@ -231,5 +175,4 @@ end
 %     
 %     \item \textbf{特殊异常处理}：TLB重填异常自动进入直接翻译模式，有独立入口
 %     
-%     \item \textbf{重取指机制}：解决配置变更对流水线的影响
 % \end{itemize}
