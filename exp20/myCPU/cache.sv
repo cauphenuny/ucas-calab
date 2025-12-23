@@ -149,7 +149,7 @@ wire [WIDTH_BANK-1:0] bank = offset[WIDTH_BANK+1:2];
 wire [WIDTH_BANK-1:0] buf_bank = buf_offset[WIDTH_BANK+1:2];
 
 // effective address that without bank-offset
-wire [31-2:0] req_addr_eff = {buf_tag, buf_index, buf_bank};
+wire [31-2:0] buf_addr_eff = {buf_tag, buf_index, buf_bank};
 
 wire is_lookup, is_hitwrite, is_replace, is_refill;
 
@@ -364,7 +364,7 @@ wire hit = |hit_way;
 wire [31-2:0] next_addr_eff = {tag, index, bank};
 wire next_isload = valid & ~op;
 
-wire write_conflict = (main_state == MAIN_LOOKUP) && buf_isstore && (req_addr_eff == next_addr_eff) && next_isload
+wire write_conflict = (main_state == MAIN_LOOKUP) && buf_isstore && (buf_addr_eff == next_addr_eff) && next_isload
                     | (wb_state == WB_WRITE) && (bank == wrbuf_bank) && next_isload;
 
 // request buffer
