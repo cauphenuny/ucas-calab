@@ -11,6 +11,7 @@ target_dir=$root_dir/$1/report
 
 mkdir -p $target_dir
 
-ln -s $root_dir/report-template/preamble.tex $target_dir/
-ln -s $root_dir/report-template/head.tex $target_dir/
 cp $root_dir/report-template/main.tex $target_dir/
+cd $target_dir
+ln -s ../../report-template/preamble.tex ./
+ln -s ../../report-template/head.tex ./
