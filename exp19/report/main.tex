@@ -14,46 +14,59 @@
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%
 %改这里可以修改实验报告表头的信息
-\newcommand{\name}{}
-\newcommand{\studentNum}{}
+\newcommand{\name}{袁晨圃, 王永生, 李知谦}
+\newcommand{\studentNum}{19}
 \newcommand{\major}{计算机科学与技术}
-\newcommand{\labNum}{}
-\newcommand{\labName}{}
+\newcommand{\labNum}{17,18,19}
+\newcommand{\labName}{存储管理单元设计}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \input{head.tex}
 
-\section{}
+\section{实验目标与总体设计}
 
-\noindent
-$\bullet$
-\textbf{}
+Prj6 包含 exp17、exp18、exp19 三部分，旨在将 CPU 从仅支持简单的直接地址翻译模式，升级为支持完整的存储管理单元（MMU）功能，实现软硬件协同的虚实地址转换与权限管理。具体目标包括：
+
+\begin{itemize}
+    \item TLB 模块设计：设计一个支持双端口并发查询（取指与访存）的全相联 TLB 模块，支持 4KB/4MB 页大小及 ASID 校验。 
+    \item 指令与 CSR 集成：在流水线中集成 TLB 模块，实现 \verb|TLBSRCH|、\verb|TLBRD|、\verb|TLBWR|、\verb|TLBFILL|、\verb|INVTLB| 等 TLB 维护指令，以及 \verb|ASID|、\verb|TLBIDX|、\verb|TLBEHI/LO| 等 MMU 相关控制状态寄存器。 
+    \item 地址翻译与异常支持：构建完整的地址翻译层级（直接翻译 → 直接映射窗口 → TLB 映射），并实现 TLB 重填、页无效、页修改及特权等级不合规等 MMU 相关异常的硬件检测与处理机制。
+\end{itemize}
+
+具体设计思路如下：
+首先，独立设计 TLB 模块，其内部维护一个二维查找表，提供两套独立的查询端口以支持流水线中取指（Pre-IF）和访存（EX/MEM）阶段的并行地址转换需求。
+其次，在流水线集成阶段，重点解决 MMU 配置与使用之间的冲突。由于 CSR 指令（如修改 \verb|CRMD|、\verb|ASID|）或 TLB 维护指令（如 \verb|TLBWR|）会改变地址翻译规则，流水线在这些指令提交后会立即清空，待配置稳定后再放行后续指令，以保证译址的一致性。
+最后，在地址翻译逻辑中，通过组合逻辑实现优先级的硬件裁决：优先判断直接地址翻译模式（\verb|CRMD.DA|），其次匹配直接映射窗口（\verb|DMW0/1|），最后进行 TLB 查表，确保物理地址生成的正确性与时序的稳定性。
+
+\section{逻辑电路结构图与代码说明}
+
+\input{code/tlb.tex}
+
+\input{code/instruction.tex}
+
+\input{code/csr.tex}
+
+\input{code/integration.tex}
+
+\input{code/exception.tex}
 
 \section{实验过程中遇到的问题、对问题的思考过程及解决方法}
 
+\input{debug/exp18_debug.tex}
 
-\noindent
-$\bullet$
-\textbf{}
+\input{debug/exp19_debug.tex}
 
-\vspace{1ex}
+\section{小组分工}
 
-\noindent
-$\bullet$
-\textbf{}
-
-\section{对讲义中思考题（如有）的理解和回答}
-
-\noindent
-$\bullet$
-\textbf{}
-
-
-\vspace{1ex}
+\begin{itemize}
+    \item 袁晨圃：exp17, 实验报告撰写。
+    \item 王永生：exp18 
+    \item 李知谦：exp19
+\end{itemize}
 
 \section{实验所耗时间}
 
-\newcommand{\labTime}{5}
+\newcommand{\labTime}{20}
 
 在课后，花费了大约\underline{\makebox[5em][c]{\labTime}}小时完成此次实验。
 
