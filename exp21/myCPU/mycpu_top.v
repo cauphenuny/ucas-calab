@@ -80,12 +80,29 @@ module mycpu_top(
     wire        data_sram_data_ok;
     wire [31:0] data_sram_rdata;
 
+    // icache <-> axi bridge interface
+    wire         icache_rd_req;
+    wire [ 2:0]  icache_rd_type;
+    wire [31:0]  icache_rd_addr;
+    wire         icache_rd_rdy;
+    wire         icache_ret_valid;
+    wire         icache_ret_last;
+    wire [31:0]  icache_ret_data;
+    wire         icache_wr_req;
+    wire [ 2:0]  icache_wr_type;
+    wire [31:0]  icache_wr_addr;
+    wire [127:0] icache_wr_data;
+    wire [ 3:0]  icache_wr_wstrb;
+    wire         icache_wr_rdy;
+
+    assign icache_wr_rdy = 1'b1;
+
     sram_axi_bridge u_bridge(
         .aclk(aclk), .aresetn(aresetn),
 
-        .inst_req(inst_sram_req), .inst_wr(inst_sram_wr), .inst_size(inst_sram_size),
-        .inst_addr(inst_sram_addr), .inst_wstrb(inst_sram_wstrb), .inst_wdata(inst_sram_wdata),
-        .inst_addr_ok(inst_sram_addr_ok), .inst_data_ok(inst_sram_data_ok), .inst_rdata(inst_sram_rdata),
+        .inst_rd_req(icache_rd_req), .inst_rd_type(icache_rd_type), .inst_rd_addr(icache_rd_addr),
+        .inst_rd_rdy(icache_rd_rdy),
+        .inst_ret_valid(icache_ret_valid), .inst_ret_last(icache_ret_last), .inst_ret_data(icache_ret_data),
 
         .data_req(data_sram_req), .data_wr(data_sram_wr), .data_size(data_sram_size),
         .data_addr(data_sram_addr), .data_wstrb(data_sram_wstrb), .data_wdata(data_sram_wdata),
@@ -331,6 +348,38 @@ module mycpu_top(
     assign inst_sram_size  = 2'b10; // word
     assign inst_sram_wstrb = 4'b0;
     assign inst_sram_wdata = 32'h0;
+
+    cache u_icache(
+        .clk(clk),
+        .resetn(resetn),
+
+        .valid(inst_sram_req),
+        .op(inst_sram_wr),
+        .index(inst_vaddr[11:4]),
+        .tag(inst_paddr[31:12]),
+        .offset(inst_vaddr[3:0]),
+        .wstrb(inst_sram_wstrb),
+        .wdata(inst_sram_wdata),
+        .addr_ok(inst_sram_addr_ok),
+        .data_ok(inst_sram_data_ok),
+        .rdata(inst_sram_rdata),
+
+        .rd_req(icache_rd_req),
+        .rd_type(icache_rd_type),
+        .rd_addr(icache_rd_addr),
+        .rd_rdy(icache_rd_rdy),
+
+        .ret_valid(icache_ret_valid),
+        .ret_last(icache_ret_last),
+        .ret_data(icache_ret_data),
+
+        .wr_req(icache_wr_req),
+        .wr_type(icache_wr_type),
+        .wr_addr(icache_wr_addr),
+        .wr_data(icache_wr_data),
+        .wr_wstrb(icache_wr_wstrb),
+        .wr_rdy(icache_wr_rdy)
+    );
 
     wire        if_tlb_found_out;
     wire [3:0]  if_tlb_index_out;
