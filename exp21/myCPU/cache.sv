@@ -153,6 +153,11 @@ wire [31-2:0] buf_addr_eff = {buf_tag, buf_index, buf_bank};
 
 wire is_lookup, is_hitwrite, is_replace, is_refill;
 
+// 在 LOOKUP 时使用输入地址，其他状态使用 buffer 地址
+wire [WIDTH_INDEX-1:0] lookup_index = is_lookup ? index : buf_index;
+wire [WIDTH_TAG-1:0]   lookup_tag   = is_lookup ? tag   : buf_tag;
+wire [WIDTH_BANK-1:0]  lookup_bank  = is_lookup ? bank  : buf_bank;
+
 /***************** CACHE STORAGES *****************/
 
 wire [NUM_WAYS-1:0] hit_way;
@@ -194,7 +199,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
                    | (is_replace && (replace_way[i]))
                    | (is_refill && (replace_way[i]));
 
-    assign hit_way[i] = rvalid && rtag == buf_tag;
+    assign hit_way[i] = rvalid && rtag == lookup_tag;
     assign way_tags[i] = rtag;
     assign way_valids[i] = rvalid;
     assign way_dirtys[i] = dirty[buf_index];
@@ -204,7 +209,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         .clka(clk),
         .ena(1'b1),
         .wea(tagv_wen),
-        .addra(buf_index),
+        .addra(lookup_index),
         .dina({wtag, wvalid}),
         .douta({rtag, rvalid})
     );
@@ -231,7 +236,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         );
         /* verilator lint_on MODMISSING */
 
-        wire bank_lookup = is_lookup && (buf_bank == j);
+        wire bank_lookup = is_lookup && (lookup_bank == j);
         wire bank_hitwrite = is_hitwrite && (wrbuf_way[i]) && (wrbuf_bank == j);
         wire bank_replace = is_replace && (replace_way[i]); // replace: replace all banks
         wire bank_refill = is_refill && (replace_way[i]);
@@ -270,7 +275,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         assign data_wdata = {32{write_hit}} & wrbuf_wdata
                           | {32{write_ref}} & refill_data;
 
-        assign data_index = {WIDTH_INDEX{bank_lookup}} & buf_index
+        assign data_index = {WIDTH_INDEX{bank_lookup}} & lookup_index
                           | {WIDTH_INDEX{bank_hitwrite}} & wrbuf_index
                           | {WIDTH_INDEX{bank_replace | bank_refill}} & buf_index;
 
@@ -376,15 +381,14 @@ always @(posedge clk) begin
         buf_offset <= {WIDTH_OFFSET{1'b0}};
         buf_wdata <= 32'h0;
         buf_wstrb <= 4'h0;
-    end else begin
-        if (main_next_state == MAIN_LOOKUP) begin
-            buf_isstore <= op;
-            buf_tag <= tag;
-            buf_index <= index;
-            buf_offset <= offset;
-            buf_wdata <= wdata;
-            buf_wstrb <= wstrb;
-        end
+    end else if (valid && addr_ok && !write_conflict) begin
+        // 在握手时锁存请求，确保 miss/refill 期间 PC 变化不会污染当前 miss 的地址
+        buf_isstore <= op;
+        buf_tag <= tag;
+        buf_index <= index;
+        buf_offset <= offset;
+        buf_wdata <= wdata;
+        buf_wstrb <= wstrb;
     end
 end
 
@@ -555,8 +559,8 @@ end
 
 /***************** OUTPUT SIGNALS *****************/
 
-assign addr_ok = (main_state == MAIN_IDLE)
-               | (main_state == MAIN_LOOKUP && main_next_state == MAIN_LOOKUP);
+assign addr_ok = (main_state == MAIN_IDLE && valid && !write_conflict)
+               | (main_state == MAIN_LOOKUP && hit && valid && !write_conflict);
 
 assign rdata = {32{main_state == MAIN_LOOKUP}} & hit_word
              | {32{main_state == MAIN_REFILL}} & refill_word;
