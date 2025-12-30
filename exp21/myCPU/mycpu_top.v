@@ -882,7 +882,19 @@ module mycpu_top(
     wire wb_pending_tlbsrch  = wb_inst_tlbsrch;
     wire id_stall_tlbidx = id_reads_tlbidx & (ex_pending_tlbsrch | mem_pending_tlbsrch | wb_pending_tlbsrch);
 
-    wire id_stall = id_stall1 | id_stall2 | id_stall_csr | id_stall_tlbsrch | id_stall_tlbidx;
+    // TLBRD writes TLBIDX/TLBEHI/TLBELO0/TLBELO1 in WB. A following CSRRD/CSRRW
+    // reading these CSRs must wait until the TLBRD retires.
+    wire id_reads_tlbrd_csr = id_is_csr &&
+                              ((id_csr_num == `CSR_TLBIDX)  ||
+                               (id_csr_num == `CSR_TLBEHI)  ||
+                               (id_csr_num == `CSR_TLBELO0) ||
+                               (id_csr_num == `CSR_TLBELO1));
+    wire ex_pending_tlbrd  = u_stage_ex.valid  & u_stage_ex.output_inst_tlbrd;
+    wire mem_pending_tlbrd = u_stage_mem.valid & u_stage_mem.output_inst_tlbrd;
+    wire wb_pending_tlbrd  = wb_inst_tlbrd;
+    wire id_stall_tlbrd_csr = id_reads_tlbrd_csr & (ex_pending_tlbrd | mem_pending_tlbrd | wb_pending_tlbrd);
+
+    wire id_stall = id_stall1 | id_stall2 | id_stall_csr | id_stall_tlbsrch | id_stall_tlbidx | id_stall_tlbrd_csr;
 
     // Exception info
     wire        id_ex_valid;
