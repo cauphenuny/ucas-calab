@@ -1,0 +1,80 @@
+udiv:
+  Channel Settings:
+    Common Options:
+      Algorithm Type: Radix2
+      Operand Sign: Unsigned
+    Dividend Channel:
+      Dividend Width: 32
+    Divisor Channel:
+      Divisor Width: 32
+    Output Channel:
+      Remainder Type: Remainder
+  Options:
+    Clocks per Division: 8
+    AXI4-Stream Options:
+      Flow Control: Non Blocking
+sdiv:
+  Channel Settings:
+    Common Options:
+      Algorithm Type: Radix2
+      Operand Sign: Signed
+    Dividend Channel:
+      Dividend Width: 32
+    Divisor Channel:
+      Divisor Width: 32
+    Output Channel:
+      Remainder Type: Remainder
+  Options:
+    Clocks per Division: 8
+    AXI4-Stream Options:
+      Flow Control: Non Blocking
+
+cache_tagv_ram:
+  Category:
+    - Memories and Storage Elements
+    - RAMs & ROMs & BRAM
+    - Block Memory Generator
+  Options:
+    Basic:
+      Memory Type:
+        Single Port RAM
+      Write Enable:
+        Byte Write Enable: false
+    Port A Options:
+      Memory Size:
+        Depth: 256
+        Width: 21
+      Enable Port Type: Always Enabled
+      Port A Optional Output Registers:
+        Primitives Output Register: false
+        Core Output Register: false
+    Other Options:
+      Memory Initialization:
+        Fill Remaining Memory Locations: true
+        Remaining Memory Locations (Hex): 0
+
+cache_data_ram:
+  Category:
+    - Memories and Storage Elements
+    - RAMs & ROMs & BRAM
+    - Block Memory Generator
+  Options:
+    Basic:
+      Memory Type:
+        Single Port RAM
+      Write Enable:
+        Byte Write Enable: true
+    Port A Options:
+      Memory Size:
+        Depth: 256
+        Width: 32
+      Enable Port Type: Always Enabled
+      Port A Optional Output Registers:
+        Primitives Output Register: false
+        Core Output Register: false
+    Other Options:
+      Memory Initialization:
+        Fill Remaining Memory Locations: true
+        Remaining Memory Locations (Hex): 0
+
+
