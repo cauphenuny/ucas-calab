@@ -11,6 +11,7 @@ module cache #(
     input  wire [ 3:0]  offset,
     input  wire [ 3:0]  wstrb,
     input  wire [31:0]  wdata,
+    input  wire         cacheable,
     output wire         addr_ok,
     output wire         data_ok,
     output wire [31:0]  rdata,
@@ -112,6 +113,7 @@ reg [WIDTH_INDEX-1:0] buf_index;
 reg [WIDTH_OFFSET-1:0] buf_offset;
 reg [31:0] buf_wdata;
 reg [3:0] buf_wstrb;
+reg buf_cacheable;
 
 // write buffer
 reg [NUM_WAYS-1:0] wrbuf_way;
@@ -181,7 +183,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
                 dirty[j] <= 1'b0;
             end else if (is_hitwrite && wrbuf_way[i] && wrbuf_index == j) begin
                 dirty[j] <= 1'b1;
-            end else if (is_refill && replace_way[i] && buf_index == j) begin
+            end else if (is_refill && replace_way[i] && buf_cacheable && buf_index == j) begin
                 dirty[j] <= 1'b0;
             end
         end
@@ -194,7 +196,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
 
     assign wtag = buf_tag;
     assign wvalid = 1'b1;
-    assign tagv_wen = is_refill && (replace_way[i]);
+    assign tagv_wen = is_refill && (replace_way[i]) && buf_cacheable;
     assign tagv_en = is_lookup
                    | (is_replace && (replace_way[i]))
                    | (is_refill && (replace_way[i]));
@@ -237,9 +239,9 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         /* verilator lint_on MODMISSING */
 
         wire bank_lookup = is_lookup && (lookup_bank == j);
-        wire bank_hitwrite = is_hitwrite && (wrbuf_way[i]) && (wrbuf_bank == j);
+        wire bank_hitwrite = is_hitwrite && (wrbuf_way[i]) && (wrbuf_bank == j) && buf_cacheable;
         wire bank_replace = is_replace && (replace_way[i]); // replace: replace all banks
-        wire bank_refill = is_refill && (replace_way[i]);
+        wire bank_refill = is_refill && (replace_way[i]) && buf_cacheable;
 
         always @(posedge clk) begin
             if (resetn) begin
@@ -249,8 +251,8 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
         end
 
         assign en = bank_lookup
-                  | bank_hitwrite
-                  | bank_refill;
+              | bank_hitwrite
+              | bank_refill;
 
         wire write_hit = bank_hitwrite;
         wire write_ref = bank_refill && (rpbuf_numrecv == j) && ret_valid;
@@ -359,11 +361,12 @@ selector #(
     .out(refill_word)
 );
 
-wire need_writeback = replace_valid && replace_dirty;
+wire need_writeback = replace_valid && replace_dirty && buf_cacheable;
 
 /***************** PROCESSING *****************/
 
 wire hit = |hit_way;
+wire effective_hit = hit && buf_cacheable;
 
 // effective addr (ignore address inside bank)
 wire [31-2:0] next_addr_eff = {tag, index, bank};
@@ -381,6 +384,7 @@ always @(posedge clk) begin
         buf_offset <= {WIDTH_OFFSET{1'b0}};
         buf_wdata <= 32'h0;
         buf_wstrb <= 4'h0;
+        buf_cacheable <= 1'b0;
     end else if (valid && addr_ok && !write_conflict) begin
         // 在握手时锁存请求，确保 miss/refill 期间 PC 变化不会污染当前 miss 的地址
         buf_isstore <= op;
@@ -389,6 +393,7 @@ always @(posedge clk) begin
         buf_offset <= offset;
         buf_wdata <= wdata;
         buf_wstrb <= wstrb;
+        buf_cacheable <= cacheable;
     end
 end
 
@@ -401,7 +406,7 @@ always @(posedge clk) begin
         wrbuf_wstrb <= 4'b0000;
         wrbuf_wdata <= 32'b0;
     end else begin
-        if (wb_next_state == WB_WRITE) begin
+        if (wb_next_state == WB_WRITE && buf_cacheable) begin
             wrbuf_way <= hit_way;
             wrbuf_bank <= buf_bank;
             wrbuf_index <= buf_index;
@@ -417,7 +422,7 @@ always @(posedge clk) begin
         rpbuf_numrecv <= 0;
     end else if (repl2ref) begin
         rpbuf_numrecv <= 0;
-    end else if (is_refill && ret_valid) begin
+    end else if (is_refill && ret_valid && buf_cacheable) begin
         rpbuf_numrecv <= rpbuf_numrecv + 1;
     end
 end
@@ -482,7 +487,7 @@ always @(*) begin
             end
         end
         MAIN_LOOKUP: begin
-            if (!hit) begin
+            if (!effective_hit) begin
                 main_next_state = MAIN_MISS;
             end else begin
                 if (!valid || write_conflict) begin
@@ -500,10 +505,17 @@ always @(*) begin
             end
         end
         MAIN_REPLACE: begin
-            if (rd_rdy == 1'b0) begin
-                main_next_state = MAIN_REPLACE;
+            if (uncached_store) begin
+                if (wr_rdy == 1'b0)
+                    main_next_state = MAIN_REPLACE;
+                else
+                    main_next_state = MAIN_IDLE;
             end else begin
-                main_next_state = MAIN_REFILL;
+                if (rd_rdy == 1'b0) begin
+                    main_next_state = MAIN_REPLACE;
+                end else begin
+                    main_next_state = MAIN_REFILL;
+                end
             end
         end
         MAIN_REFILL: begin
@@ -522,14 +534,14 @@ end
 always @(*) begin
     case (wb_state)
         WB_IDLE: begin
-            if (main_state == MAIN_LOOKUP && buf_isstore && hit) begin
+            if (main_state == MAIN_LOOKUP && buf_isstore && effective_hit) begin
                 wb_next_state = WB_WRITE;
             end else begin
                 wb_next_state = WB_IDLE;
             end
         end
         WB_WRITE: begin
-            if (main_state == MAIN_LOOKUP && buf_isstore && hit) begin
+            if (main_state == MAIN_LOOKUP && buf_isstore && effective_hit) begin
                 wb_next_state = WB_WRITE;
             end else begin
                 wb_next_state = WB_IDLE;
@@ -560,24 +572,33 @@ end
 /***************** OUTPUT SIGNALS *****************/
 
 assign addr_ok = (main_state == MAIN_IDLE && valid && !write_conflict)
-               | (main_state == MAIN_LOOKUP && hit && valid && !write_conflict);
+               | (main_state == MAIN_LOOKUP && valid && !write_conflict && (effective_hit || !buf_cacheable));
 
 assign rdata = {32{main_state == MAIN_LOOKUP}} & hit_word
              | {32{main_state == MAIN_REFILL}} & refill_word;
 
-assign data_ok = (main_state == MAIN_LOOKUP && hit)
-               | (main_state == MAIN_LOOKUP && buf_isstore)
-               | (main_state == MAIN_REFILL && ret_valid == 1'b1 && rpbuf_numrecv == buf_bank && ~buf_isstore);
+wire uncached_store_ok = (main_state == MAIN_REPLACE) && buf_isstore && !buf_cacheable && wr_rdy;
+wire refill_data_ok = (main_state == MAIN_REFILL) && ret_valid && ~buf_isstore
+                && (buf_cacheable ? (rpbuf_numrecv == buf_bank) : 1'b1);
 
-assign rd_type = AXI_LINE;
-assign rd_req = (main_state == MAIN_REPLACE);
-assign rd_addr = {buf_tag, buf_index, {WIDTH_OFFSET{1'b0}}};
+assign data_ok = (main_state == MAIN_LOOKUP && effective_hit)
+               | (main_state == MAIN_LOOKUP && buf_isstore && buf_cacheable)
+               | refill_data_ok
+               | uncached_store_ok;
+
+wire uncached_store = buf_isstore && !buf_cacheable;
+wire uncached_load  = (~buf_isstore) && !buf_cacheable;
+
+assign rd_type = buf_cacheable ? AXI_LINE : AXI_WORD;
+assign rd_req = (main_state == MAIN_REPLACE) && ~uncached_store;
+assign rd_addr = buf_cacheable ? {buf_tag, buf_index, {WIDTH_OFFSET{1'b0}}}
+                               : {buf_tag, buf_index, buf_offset};
 
 always @(posedge clk) begin
     if (!resetn) begin
         wr_req <= 1'b0;
     end else begin
-        if (miss2repl && need_writeback) begin
+        if (miss2repl && (need_writeback || uncached_store)) begin
             wr_req <= 1'b1;
         end else if (wr_rdy == 1'b1) begin
             wr_req <= 1'b0;
@@ -585,9 +606,22 @@ always @(posedge clk) begin
     end
 end
 
-assign wr_type = AXI_LINE;
-assign wr_addr = {rpbuf_tag, buf_index, {WIDTH_OFFSET{1'b0}}};
-assign wr_data = replace_line;
-assign wr_wstrb = 4'b1111;
+function [2:0] store_axi_type;
+    input [3:0] strb;
+    begin
+        case (strb)
+            4'b1111: store_axi_type = AXI_WORD;
+            4'b0011,
+            4'b1100: store_axi_type = AXI_HALF;
+            default: store_axi_type = AXI_BYTE;
+        endcase
+    end
+endfunction
+
+assign wr_type = buf_cacheable ? AXI_LINE : store_axi_type(buf_wstrb);
+assign wr_addr = buf_cacheable ? {rpbuf_tag, buf_index, {WIDTH_OFFSET{1'b0}}}
+                               : {buf_tag, buf_index, buf_offset};
+assign wr_data = buf_cacheable ? replace_line : {96'h0, buf_wdata};
+assign wr_wstrb = buf_cacheable ? 4'b1111 : buf_wstrb;
 
 endmodule

@@ -231,6 +231,13 @@ module mycpu_top(
         end
     endfunction
 
+    function automatic is_cacheable;
+        input [1:0] mat;
+        begin
+            is_cacheable = (mat == 2'b01); // MAT=1: cacheable; 0/2: uncached; 3: reserved
+        end
+    endfunction
+
     always @(posedge clk) begin
         if (rst)
             next_pc <= ENTRYPOINT + 4;
@@ -355,6 +362,11 @@ module mycpu_top(
                         if_dmw_hit     ? if_dmw_pa  :
                         if_tlb_pa;
 
+    wire [1:0] inst_mat = if_direct_mode ? csr_crmd_value[`CSR_CRMD_DATF]
+                        : if_dmw_hit     ? if_dmw_mat
+                        :                   s0_mat;
+    wire       inst_cacheable = is_cacheable(inst_mat);
+
     assign if_meta_tlb_found = if_ex_tlb ? s0_found : 1'b0;
     assign if_meta_tlb_index = if_ex_tlb ? s0_index : 4'h0;
     assign if_meta_tlb_ps    = if_ex_tlb ? s0_ps    : 6'h0;
@@ -377,6 +389,7 @@ module mycpu_top(
         .offset(inst_vaddr[3:0]),
         .wstrb(inst_sram_wstrb),
         .wdata(inst_sram_wdata),
+        .cacheable(inst_cacheable),
         .addr_ok(inst_sram_addr_ok),
         .data_ok(inst_sram_data_ok),
         .rdata(inst_sram_rdata),
@@ -398,6 +411,8 @@ module mycpu_top(
         .wr_rdy(icache_wr_rdy)
     );
 
+    wire data_cacheable;
+
     cache u_dcache(
         .clk(clk),
         .resetn(resetn),
@@ -409,6 +424,7 @@ module mycpu_top(
         .offset(data_vaddr[3:0]),
         .wstrb(data_sram_wstrb),
         .wdata(data_sram_wdata),
+        .cacheable(data_cacheable),
         .addr_ok(data_sram_addr_ok),
         .data_ok(data_sram_data_ok),
         .rdata(data_sram_rdata),
@@ -823,6 +839,11 @@ module mycpu_top(
     assign data_paddr = data_direct_mode ? data_vaddr :
                         data_dmw_hit   ? data_dmw_pa :
                         data_tlb_pa;
+
+    wire [1:0] data_mat = data_direct_mode ? csr_crmd_value[`CSR_CRMD_DATM]
+                          : data_dmw_hit   ? data_dmw_mat
+                          :                  s1_mat;
+    assign     data_cacheable = is_cacheable(data_mat);
 
     wire        ls_ex_tlb = data_mmu_ex;
     wire [5:0]  ls_ex_ecode = data_mmu_ecode;
