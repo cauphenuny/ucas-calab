@@ -14,16 +14,21 @@ module sram_axi_bridge (
         output wire        inst_ret_valid,
         output wire        inst_ret_last,
         output wire [31:0] inst_ret_data,
-        // data sram side
-        input  wire        data_req,
-        input  wire        data_wr,
-        input  wire [ 1:0] data_size,
-        input  wire [31:0] data_addr,
-        input  wire [ 3:0] data_wstrb,
-        input  wire [31:0] data_wdata,
-        output wire        data_addr_ok,
-        output wire        data_data_ok,
-        output reg  [31:0] data_rdata,
+        // data cache read side
+        input  wire        data_rd_req,
+        input  wire [ 2:0] data_rd_type,
+        input  wire [31:0] data_rd_addr,
+        output wire        data_rd_rdy,
+        output wire        data_ret_valid,
+        output wire        data_ret_last,
+        output wire [31:0] data_ret_data,
+        // data cache writeback side
+        input  wire        data_wr_req,
+        input  wire [ 2:0] data_wr_type,
+        input  wire [31:0] data_wr_addr,
+        input  wire [127:0] data_wr_data,
+        input  wire [ 3:0] data_wr_wstrb,
+        output wire        data_wr_rdy,
         // AXI read address
         output reg  [ 3:0] arid,
         output reg  [31:0] araddr,
@@ -72,13 +77,6 @@ module sram_axi_bridge (
     assign rready = inst_rd_ongoing || data_rd_ongoing;
 
     reg wr_ongoing;   // 写已发出，等待 B 响应
-    assign bready = wr_ongoing;
-
-    reg data_rd_addr_ok, data_wr_addr_ok;
-    reg data_rd_data_ok, data_wr_data_ok;
-
-    assign data_addr_ok = data_rd_addr_ok || data_wr_addr_ok;
-    assign data_data_ok = data_rd_data_ok || data_wr_data_ok;
 
     localparam [3:0] ID_INST = 4'd0;
     localparam [3:0] ID_DATA = 4'd1;
@@ -87,18 +85,28 @@ module sram_axi_bridge (
     localparam [2:0] AXI_WORD = 3'b010;
     localparam [2:0] AXI_LINE = 3'b100;
 
-    wire [2:0] inst_rd_size = (inst_rd_type == AXI_BYTE) ? 3'b000 :
-                              (inst_rd_type == AXI_HALF) ? 3'b001 :
-                              3'b010;
-    wire [7:0] inst_rd_len  = (inst_rd_type == AXI_LINE) ? 8'd3 : 8'd0;
+    function [2:0] axi_size;
+        input [2:0] req_type;
+        begin
+            case (req_type)
+                AXI_BYTE: axi_size = 3'b000;
+                AXI_HALF: axi_size = 3'b001;
+                default:  axi_size = 3'b010;
+            endcase
+        end
+    endfunction
 
-    wire data_read_req = data_req && !data_wr;
-    wire can_accept_ar = !arvalid && !inst_rd_ongoing && !data_rd_ongoing && !wr_ongoing;
+    wire [2:0] inst_rd_size = axi_size(inst_rd_type);
+    wire [7:0] inst_rd_len  = (inst_rd_type == AXI_LINE) ? 8'd3 : 8'd0;
+    wire [2:0] data_rd_size = axi_size(data_rd_type);
+    wire [7:0] data_rd_len  = (data_rd_type == AXI_LINE) ? 8'd3 : 8'd0;
+
+    wire data_read_req = data_rd_req;
+    wire can_accept_ar = !arvalid && !inst_rd_ongoing && !data_rd_ongoing && !wr_ongoing && !awvalid && !wvalid;
 
     // AR 通道：仅驱动 AXI 读地址握手信号
     always @(posedge aclk) begin
         if (!aresetn) begin
-            data_rd_addr_ok <= 1'b0;
             arvalid <= 1'b0;
             araddr  <= 32'h0;
             arsize  <= 3'b010;
@@ -109,22 +117,20 @@ module sram_axi_bridge (
             arcache <= 4'b0000;
             arprot  <= 3'b000;
         end else begin
-            data_rd_addr_ok <= 1'b0;
             if (!arvalid && can_accept_ar) begin
                 // 数据读优先：支持立即发起（同拍）或使用挂起
                 if (data_read_req) begin
-                    data_rd_addr_ok <= 1'b1;
-                    araddr   <= data_addr;
-                    arsize   <= {1'b0, data_size};
-                    arlen    <= 8'd0;
-                    arid     <= ID_DATA;
-                    arvalid  <= 1'b1;
+                    araddr  <= data_rd_addr;
+                    arsize  <= data_rd_size;
+                    arlen   <= data_rd_len;
+                    arid    <= ID_DATA;
+                    arvalid <= 1'b1;
                 end else if (inst_rd_req) begin
-                    araddr   <= inst_rd_addr;
-                    arsize   <= inst_rd_size;
-                    arlen    <= inst_rd_len;
-                    arid     <= ID_INST;
-                    arvalid  <= 1'b1;
+                    araddr  <= inst_rd_addr;
+                    arsize  <= inst_rd_size;
+                    arlen   <= inst_rd_len;
+                    arid    <= ID_INST;
+                    arvalid <= 1'b1;
                 end
             end
             if (arvalid && arready) begin
@@ -142,16 +148,17 @@ module sram_axi_bridge (
     assign inst_ret_data  = rdata;
     assign inst_rd_rdy    = can_accept_ar && !data_read_req;
 
+    assign data_ret_valid = data_ret_fire;
+    assign data_ret_last  = data_ret_fire && rlast;
+    assign data_ret_data  = rdata;
+    assign data_rd_rdy    = can_accept_ar;
+
     always @(posedge aclk) begin
         if (!aresetn) begin
             // 读缓存/类SRAM握手
             inst_rd_ongoing <= 1'b0;
-            data_rd_data_ok <= 1'b0;
             data_rd_ongoing <= 1'b0;
-            data_rdata      <= 32'h0;
         end else begin
-            data_rd_data_ok <= 1'b0;
-
             // AR 握手
             if (arvalid && arready) begin
                 if (arid == ID_INST)
@@ -161,21 +168,40 @@ module sram_axi_bridge (
             end
 
             // R 响应：按 ID 分发，缓存并发出 data_ok 脉冲
-            if (inst_ret_fire && rlast) begin
+            if (inst_ret_fire && rlast)
                 inst_rd_ongoing <= 1'b0;
-            end else if (data_ret_fire && rlast) begin
-                data_rdata      <= rdata;
-                data_rd_data_ok <= 1'b1;
+            if (data_ret_fire && rlast)
                 data_rd_ongoing <= 1'b0;
-            end
         end
     end
 
     // 写通道（AW/W）
+    assign bready = wr_ongoing;
+
+    wire [2:0] data_wr_size = axi_size(data_wr_type);
+    wire [7:0] data_wr_len  = (data_wr_type == AXI_LINE) ? 8'd3 : 8'd0;
+
+    reg [7:0]  wr_cnt;
+    reg [7:0]  wr_len;
+    reg [127:0] wr_data_buf;
+    reg [3:0]  wr_strb_buf;
+    reg        data_wr_rdy_r;
+
+    assign data_wr_rdy = data_wr_rdy_r;
+
+    wire wr_idle = !awvalid && !wvalid && !wr_ongoing;
+    wire can_start_wr = wr_idle && !arvalid && !inst_rd_ongoing && !data_rd_ongoing;
+
     always @(posedge aclk) begin
         if (!aresetn) begin
-            data_wr_addr_ok <= 1'b0;
             // AXI 写地址/数据通道
+            data_wr_rdy_r <= 1'b0;
+            wr_ongoing <= 1'b0;
+            wr_cnt <= 8'h0;
+            wr_len <= 8'h0;
+            wr_data_buf <= 128'h0;
+            wr_strb_buf <= 4'h0;
+
             awvalid <= 1'b0;
             awaddr  <= 32'h0;
             awsize  <= 3'b010;
@@ -185,6 +211,7 @@ module sram_axi_bridge (
             awlock  <= 2'b00;
             awcache <= 4'b0000;
             awprot  <= 3'b000;
+
             wvalid  <= 1'b0;
             wid     <= ID_DATA;
             wdata   <= 32'h0;
@@ -193,43 +220,48 @@ module sram_axi_bridge (
         end else begin
             // AW/W：同步驱动 awvalid/wvalid，保持到握手
             // 两个通道独立握手，均完成后结束本次发送
-            data_wr_addr_ok <= 1'b0;
-            if (!awvalid && !wvalid && !wr_ongoing) begin
-                if (data_req && data_wr) begin
-                    data_wr_addr_ok <= 1'b1;
-                    awaddr      <= data_addr;
-                    awsize      <= {1'b0, data_size};
-                    awid        <= ID_DATA;
-                    wdata       <= data_wdata;
-                    wstrb       <= data_wstrb;
-                    wlast       <= 1'b1;
-                    awvalid     <= 1'b1;
-                    wvalid      <= 1'b1;
+            data_wr_rdy_r <= 1'b0;
+
+            if (can_start_wr && data_wr_req) begin
+                data_wr_rdy_r <= 1'b1;
+                wr_ongoing    <= 1'b1;
+                wr_cnt        <= 8'h0;
+                wr_len        <= data_wr_len;
+                wr_data_buf   <= data_wr_data;
+                wr_strb_buf   <= data_wr_wstrb;
+
+                awaddr  <= data_wr_addr;
+                awsize  <= data_wr_size;
+                awlen   <= data_wr_len;
+                awid    <= ID_DATA;
+                awburst <= 2'b01;
+                awlock  <= 2'b00;
+                awcache <= 4'b0000;
+                awprot  <= 3'b000;
+                awvalid <= 1'b1;
+
+                wid     <= ID_DATA;
+                wdata   <= data_wr_data[31:0];
+                wstrb   <= data_wr_wstrb;
+                wlast   <= (data_wr_len == 0);
+                wvalid  <= 1'b1;
+            end
+
+            if (awvalid && awready)
+                awvalid <= 1'b0;
+
+            if (wvalid && wready) begin
+                if (wr_cnt == wr_len) begin
+                    wvalid <= 1'b0;
+                end else begin
+                    wr_cnt <= wr_cnt + 1;
+                    wdata  <= wr_data_buf[(wr_cnt + 1) * 32 +: 32];
+                    wstrb  <= wr_strb_buf;
+                    wlast  <= (wr_cnt + 1 == wr_len);
                 end
             end
-            if (awvalid && awready) begin
-                awvalid <= 1'b0;
-            end
-            if (wvalid && wready) begin
-                wvalid <= 1'b0;
-            end
-        end
-    end
 
-    // 写响应通道（B）
-    always @(posedge aclk) begin
-        if (!aresetn) begin
-            data_wr_data_ok <= 1'b0;
-            wr_ongoing <= 1'b0;
-        end else begin
-            data_wr_data_ok <= 1'b0;
-            // AW/W 握手
-            if (!awvalid && !wvalid && !wr_ongoing) begin
-                if (data_req && data_wr)
-                    wr_ongoing <= 1'b1;
-            end
             if (bvalid && bready) begin
-                data_wr_data_ok <= 1'b1;
                 wr_ongoing <= 1'b0;
             end
         end
