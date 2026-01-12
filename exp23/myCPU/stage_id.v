@@ -78,6 +78,11 @@ module stage_id(
     output wire [ 9:0] output_invtlb_asid,
     output wire [31:0] output_invtlb_vaddr,
 
+    // Cache instructions
+    output wire        output_inst_dcache_op,
+    output wire        output_inst_icache_op,
+    output wire [ 1:0] output_cacop_mode,
+
     // I/O
     input  wire [31:0] rf_rdata1, rf_rdata2,
     output wire [ 4:0] rf_raddr1, rf_raddr2
@@ -253,6 +258,9 @@ module stage_id(
     wire        inst_invtlb;
     wire        inst_invtlb_raw;
     wire        invtlb_op_valid;
+    wire        inst_cacop;
+    wire        inst_cacop_raw;
+    wire        cacop_code_valid;
 
     wire        exception_ine;
     wire        exception_intr;
@@ -375,8 +383,13 @@ module stage_id(
                            | (invtlb_op == 5'h5)
                            | (invtlb_op == 5'h6);
     assign inst_invtlb = inst_invtlb_raw & invtlb_op_valid;
-    
     wire [4:0] invtlb_op = inst[4:0];  // INVTLB operation code
+
+    // CACOP
+    assign inst_cacop_raw = ~ex_valid_r & ({op_31_26_d, op_25_22_d} == 10'b0000011000);
+    wire [4:0] cacop_code = inst[4:0];
+    assign cacop_code_valid = (cacop_code[2:0] == 3'b0 || cacop_code[2:0] == 3'b1) && (cacop_code[4:3] == 2'd0 || cacop_code[4:3] == 2'd1 || cacop_code[4:3] == 2'd2);
+    assign inst_cacop = inst_cacop_raw & cacop_code_valid;
 
     assign exception_ine = ~ex_valid_r      &
                            ~inst_add_w      & ~inst_sub_w       & ~inst_slt     & ~inst_sltu &
@@ -394,7 +407,7 @@ module stage_id(
                            ~inst_csrrd      & ~inst_csrwr       & ~inst_csrxchg & ~inst_rdcntvl_w &
                            ~inst_rdcntvh_w  & ~inst_rdcntid     & ~inst_break   &
                            ~inst_tlbsrch    & ~inst_tlbrd       & ~inst_tlbwr   & ~inst_tlbfill &
-                           ~inst_invtlb     ;
+                           ~inst_invtlb     & ~inst_cacop;
 
     assign exception_intr = valid & (intr_stat != 13'h0);
 
@@ -408,7 +421,7 @@ module stage_id(
 
     assign alu_op[ 0] = inst_add_w | inst_addi_w| inst_ld_b | inst_ld_h
                         | inst_ld_bu | inst_ld_hu | inst_ld_w | inst_st_b | inst_st_h | inst_st_w
-                        | inst_jirl | inst_bl | inst_pcaddu12i;
+                        | inst_jirl | inst_bl | inst_pcaddu12i | inst_cacop;
     assign alu_op[ 1] = inst_sub_w;
     assign alu_op[ 2] = inst_slt | inst_slti;
     assign alu_op[ 3] = inst_sltu | inst_sltui;
@@ -432,7 +445,7 @@ module stage_id(
 
     assign need_ui5   =  inst_slli_w | inst_srli_w | inst_srai_w;
     assign need_si12  =  inst_addi_w | inst_ld_b | inst_ld_h | inst_ld_bu 
-                        | inst_ld_hu | inst_ld_w | inst_st_b | inst_st_h | inst_st_w | inst_slti | inst_sltui;
+                        | inst_ld_hu | inst_ld_w | inst_st_b | inst_st_h | inst_st_w | inst_slti | inst_sltui | inst_cacop;
     assign need_ui12  =  inst_andi | inst_ori | inst_xori;
     assign need_si16  =  inst_jirl | inst_beq | inst_bne | inst_blt | inst_bge | inst_bltu | inst_bgeu;
     assign need_si20  =  inst_lu12i_w | inst_pcaddu12i;
@@ -476,6 +489,7 @@ module stage_id(
                          | inst_andi
                          | inst_ori
                          | inst_xori
+                         | inst_cacop
                          ;
 
     assign res_from_mem  = inst_ld_b | inst_ld_h | inst_ld_bu | inst_ld_hu | inst_ld_w;
@@ -484,9 +498,10 @@ module stage_id(
 
     assign gr_we         = legal &
                            ~inst_st_b & ~inst_st_h & ~inst_st_w & ~inst_beq & ~inst_bne &
-                           ~inst_b & ~inst_blt & ~inst_bge & ~inst_bltu & ~inst_bgeu & 
+                           ~inst_b & ~inst_blt & ~inst_bge & ~inst_bltu & ~inst_bgeu &
                            ~inst_syscall & ~inst_ertn & ~inst_syscall &
-                           ~inst_tlbsrch & ~inst_tlbrd & ~inst_tlbwr & ~inst_tlbfill & ~inst_invtlb;
+                           ~inst_tlbsrch & ~inst_tlbrd & ~inst_tlbwr & ~inst_tlbfill & ~inst_invtlb &
+                           ~inst_cacop;
 
     assign mem_we        = inst_st_b | inst_st_h | inst_st_w;
     assign dest          = dst_is_r1 ? 5'd1 : dst_is_rj ? rj : rd;
@@ -524,6 +539,8 @@ module stage_id(
     assign alu_src2 = src2_is_imm ? imm : rkd_value;
 
 /**************** exception detect & output ****************/
+
+// FIXME: may add IPE?
 
     assign ex_valid = inst_break & valid
                     | inst_syscall & valid
@@ -596,6 +613,10 @@ module stage_id(
     assign output_invtlb_op    = invtlb_op;
     assign output_invtlb_asid  = (inst_invtlb & valid) ? rj_value[9:0] : 10'b0;
     assign output_invtlb_vaddr = (inst_invtlb & valid) ? rkd_value : 32'h0;
+
+    assign output_inst_icache_op = inst_cacop & valid & (cacop_code[2:0] == 3'h0);
+    assign output_inst_dcache_op = inst_cacop & valid & (cacop_code[2:0] == 3'h1);
+    assign output_cacop_mode = cacop_code[4:3];
     
     // br_stall: 转移指令计算未完成，需要阻塞取指
     // 需要寄存器值的转移指令：beq, bne, blt, bge, bltu, bgeu, jirl

@@ -1109,6 +1109,10 @@ module mycpu_top(
         .output_invtlb_asid(id_invtlb_asid),
         .output_invtlb_vaddr(id_invtlb_vaddr),
 
+        // Cache instructions
+        .output_inst_cacop(),
+        .output_cacop_code(),
+
         .output_ex_valid(id_ex_valid),
         .output_ecode(id_ecode),
         .output_esubcode(id_esubcode),
