@@ -1,0 +1,87 @@
+% 这是中国科学院大学计算机科学与技术专业《计算机组成原理（研讨课）》使用的实验报告 Latex 模板
+% 本模板与 2024 年 2 月 Jun-xiong Ji 完成, 更改自由 Shing-Ho Lin 和 Jun-Xiong Ji 于 2022 年 9 月共同完成的基础物理实验模板
+% 如有任何问题, 请联系: jijunxoing21@mails.ucas.ac.cn
+% This is the LaTeX template for report of Experiment of Computer Organization and Design courses, based on its provided Word template. 
+% This template is completed on Febrary 2024, based on the joint collabration of Shing-Ho Lin and Junxiong Ji in September 2022. 
+% Adding numerous pictures and equations leads to unsatisfying experience in Word. Therefore LaTeX is better. 
+% Feel free to contact me via: jijunxoing21@mails.ucas.ac.cn
+
+\documentclass[11pt]{article}
+
+\input{preamble.tex}
+
+\begin{document}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%改这里可以修改实验报告表头的信息
+\newcommand{\name}{袁晨圃, 王永生, 李知谦}
+\newcommand{\studentNum}{19}
+\newcommand{\major}{计算机科学与技术}
+\newcommand{\labNum}{20,21,22,23}
+\newcommand{\labName}{Cache 设计}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\input{head.tex}
+
+\section{实验目标与总体设计}
+
+Prj10 包含 exp20、exp21、exp22、exp23 四部分，旨在为 CPU 添加高速缓存（Cache）支持，以解决去除指令 RAM 和数据 RAM 后性能大幅下降的问题。本项目按照由简入繁的设计思路，分四个阶段逐步完成 Cache 的设计与集成。具体目标包括：
+
+\begin{itemize}
+    \item \textbf{Cache 模块设计（exp20）：}设计一个通用的 Cache 模块，采用 2 路组相联结构，每路大小 4KB（总容量 8KB），Cache 行大小 16B。支持 Tag 和 Data 同步访问，采用 VIPT（虚 Index 实 Tag）访问方式，使用伪随机替换算法，写回写分配策略，阻塞式设计。
+    \item \textbf{指令 Cache 集成（exp21）：}将 Cache 模块作为 ICache 集成到 CPU 取指通路中，适配 pre-IF 级与 IF 级之间的握手协议。同时修改 AXI 总线接口模块，支持 Burst 传输模式以优化 Cache 行的读写效率。
+    \item \textbf{数据 Cache 集成（exp22）：}将 Cache 模块作为 DCache 集成到 CPU 访存通路中，适配 EX 级与 MEM 级之间的握手协议。需特别处理 Cache 命中/缺失情况下的流水线控制，以及强序非缓存（SUC）访问与缓存访问的统一处理。
+    \item \textbf{Cache 维护指令支持（exp23）：}实现 \verb|CACOP| 指令，支持 Cache 的初始化与维护操作。通过复用正常访问的数据通路，实现 Cache 行的失效（Invalid）、索引失效（Index Invalid）、命中失效（Hit Invalid）等功能，确保 Cache 一致性维护的正确性。
+\end{itemize}
+
+\subsection{总体设计思路}
+
+整个设计遵循模块化、可复用的原则，将 Cache 功能与 CPU 流水线解耦，使得同一 Cache 模块可分别实例化为 ICache 和 DCache。
+
+\textbf{Cache 模块内部设计：}
+Cache 模块内部维护 12 张存储表：Way0 和 Way1 各包含 1 张 \{Tag,V\} RAM（256×21 位）、1 张 Dirty Regfile（256×1 位）、4 张 Bank RAM（256×32 位，支持字节写使能）。通过 Request Buffer 寄存访问请求信息，Tag Compare 逻辑判断命中情况，Data Select 逻辑选择正确的数据返回。Cache 缺失时，通过主状态机（IDLE → LOOKUP → MISS → REPLACE → REFILL）协调替换与重填操作；Cache 命中写时，通过 Write Buffer 状态机（IDLE ↔ WRITE）延迟一拍写入，避免 RAM 输出到输入的组合路径。
+
+\textbf{流水线集成策略：}
+ICache 的请求来自 pre-IF 级，结果返回至 IF 级；DCache 的请求来自 EX 级，结果返回至 MEM 级。通过 \verb|addr_ok| 和 \verb|data_ok| 握手信号控制流水线阻塞：Cache 缺失时 \verb|addr_ok| 为 0，阻止新请求进入；数据返回时 \verb|data_ok| 为 1，允许指令继续流水。对于写操作，即使 Cache 缺失也立即放行（\verb|data_ok| 为 1），避免阻塞后续非访存指令。
+
+\textbf{非缓存访问处理：}
+根据 CSR.CRMD 的 DATF/DATM 域或 TLB 页表项的 MAT 域判断访问类型。非缓存访问强制视为 Cache Miss，复用缺失处理流程向总线发起请求，但不进行 Cache 行替换和重填。为保证强序非缓存的顺序性，AXI 接口模块内部需阻塞后续非缓存请求，直到前序非缓存写的 \verb|bvalid| 返回。
+
+\textbf{CACOP 指令实现：}
+CACOP 指令复用现有数据通路：Invalid 操作通过 Refill 通路将 V 位写 0；Hit Invalid 通过 Tag Compare 判断命中后执行失效；Index Invalid 直接对指定索引失效。指令 Cache 的 CACOP 操作与取指存在特权资源冲突，采用清空流水线重取指的控制机制解决。
+
+\section{逻辑电路结构图与代码说明}
+
+\input{code/cache_module.tex}
+
+\input{code/icache_integration.tex}
+
+\input{code/dcache_integration.tex}
+
+\input{code/cacop_instruction.tex}
+
+\section{实验过程中遇到的问题、对问题的思考过程及解决方法}
+
+\input{debug/exp20_debug.tex}
+
+\input{debug/exp21_debug.tex}
+
+\input{debug/exp22_debug.tex}
+
+\input{debug/exp23_debug.tex}
+
+\section{小组分工}
+
+\begin{itemize}
+    \item 袁晨圃：exp20,exp23
+    \item 王永生：exp21,实验报告撰写
+    \item 李知谦：exp22
+\end{itemize}
+
+\section{实验所耗时间}
+
+\newcommand{\labTime}{23}
+
+在课后，花费了大约\underline{\makebox[5em][c]{\labTime}}小时完成此次实验。
+
+\end{document}
