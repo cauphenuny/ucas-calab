@@ -454,7 +454,7 @@ always @(posedge clk) begin
     end
 end
 
-wire miss2repl = main_state == MAIN_MISS && main_next_state == MAIN_REPLACE;
+wire miss2miss = main_state == MAIN_MISS && main_next_state == MAIN_MISS;
 wire repl2ref = main_state == MAIN_REPLACE && main_next_state == MAIN_REFILL;
 wire lookup2miss = main_state == MAIN_LOOKUP && main_next_state == MAIN_MISS;
 
@@ -462,7 +462,7 @@ always @(posedge clk) begin
     if (!resetn) begin
         rpbuf_tag <= {WIDTH_TAG{1'b0}};
     end else begin
-        if (miss2repl) begin
+        if (!miss2miss) begin
             rpbuf_tag <= writeback_tag;
         end
     end
@@ -640,7 +640,7 @@ always @(posedge clk) begin
     if (!resetn) begin
         wr_req <= 1'b0;
     end else begin
-        if (miss2repl && (need_writeback || uncached_store)) begin
+        if (!miss2miss && (need_writeback || uncached_store)) begin
             wr_req <= 1'b1;
         end else if (wr_rdy == 1'b1) begin
             wr_req <= 1'b0;
