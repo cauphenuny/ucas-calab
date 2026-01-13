@@ -77,7 +77,15 @@ module stage_mem(
     output wire        output_inst_invtlb,
     output wire [ 4:0] output_invtlb_op,
     output wire [ 9:0] output_invtlb_asid,
-    output wire [31:0] output_invtlb_vaddr,
+    output wire [31:0] output_invtlb_vaddr, // Existing line
+
+    // Cache instructions
+    input  wire        input_inst_dcache_op,
+    input  wire        input_inst_icache_op,
+    input  wire [ 1:0] input_cacop_mode,
+    output wire        output_inst_dcache_op,
+    output wire        output_inst_icache_op,
+    output wire [ 1:0] output_cacop_mode,
     
     // TLBSRCH result
     input  wire        input_tlbsrch_found,
@@ -121,7 +129,9 @@ module stage_mem(
     reg [31:0]  alu_result;
     reg         drop_data_ok;
 
-    assign is_mem_op   = mem_read | mem_write;
+    reg        inst_dcache_op_r; // Register for D-Cache Op
+
+    assign is_mem_op   = mem_read | mem_write | inst_dcache_op_r; // Include D-Cache Op
     assign drop_now         = cancel & valid & is_mem_op;
     assign data_ok_effective= data_sram_data_ok & ~(drop_data_ok | drop_now);
 
@@ -225,6 +235,11 @@ module stage_mem(
     reg [ 4:0] invtlb_op_r;
     reg [ 9:0] invtlb_asid_r;
     reg [31:0] invtlb_vaddr_r;
+
+    // Cache Op registers
+    // inst_dcache_op_r already defined above for is_mem_op usage
+    reg        inst_icache_op_r;
+    reg [ 1:0] cacop_mode_r;
     
     // TLBSRCH result registers
     reg        tlbsrch_found_r;
@@ -246,6 +261,9 @@ module stage_mem(
             invtlb_op_r    <= 5'b0;
             invtlb_asid_r  <= 10'b0;
             invtlb_vaddr_r <= 32'h0;
+            inst_dcache_op_r <= 1'b0;
+            inst_icache_op_r <= 1'b0;
+            cacop_mode_r     <= 2'b0;
             tlbsrch_found_r <= 1'b0;
             tlbsrch_index_r <= 4'b0;
         end else if (pipe.refreshing) begin
@@ -265,6 +283,9 @@ module stage_mem(
             invtlb_op_r    <= input_invtlb_op;
             invtlb_asid_r  <= input_invtlb_asid;
             invtlb_vaddr_r <= input_invtlb_vaddr;
+            inst_dcache_op_r <= input_inst_dcache_op;
+            inst_icache_op_r <= input_inst_icache_op;
+            cacop_mode_r     <= input_cacop_mode;
             tlbsrch_found_r <= input_tlbsrch_found;
             tlbsrch_index_r <= input_tlbsrch_index;
         end
@@ -288,6 +309,11 @@ module stage_mem(
     assign output_invtlb_op    = invtlb_op_r;
     assign output_invtlb_asid  = invtlb_asid_r;
     assign output_invtlb_vaddr = invtlb_vaddr_r;
+
+    // Cache Op outputs
+    assign output_inst_dcache_op = inst_dcache_op_r & valid;
+    assign output_inst_icache_op = inst_icache_op_r & valid;
+    assign output_cacop_mode     = cacop_mode_r;
     
     // TLBSRCH result outputs
     assign output_tlbsrch_found = tlbsrch_found_r;

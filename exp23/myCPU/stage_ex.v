@@ -89,6 +89,14 @@ module stage_ex(
     output wire [ 4:0] output_invtlb_op,
     output wire [ 9:0] output_invtlb_asid,
     output wire [31:0] output_invtlb_vaddr,
+
+    // Cache instructions
+    input  wire        input_inst_dcache_op,
+    input  wire        input_inst_icache_op,
+    input  wire [ 1:0] input_cacop_mode,
+    output wire        output_inst_dcache_op,
+    output wire        output_inst_icache_op,
+    output wire [ 1:0] output_cacop_mode,
     
     // TLBSRCH result
     input  wire        tlbsrch_found,
@@ -323,7 +331,7 @@ module stage_ex(
 
     wire is_store = op_st_w | op_st_h | op_st_b;
     wire is_load  = op_ld_w | op_ld_h | op_ld_hu | op_ld_b | op_ld_bu;
-    wire is_mem_op = is_store | is_load;
+    wire is_mem_op = is_store | is_load | input_inst_dcache_op; // Treat D-Cache CACOP as memory op for request trigger
 
     assign output_is_mem_op = is_mem_op; 
 
@@ -428,6 +436,11 @@ module stage_ex(
     reg [ 4:0] invtlb_op_r;
     reg [ 9:0] invtlb_asid_r;
     reg [31:0] invtlb_vaddr_r;
+
+    // Cache Op registers
+    reg        inst_dcache_op_r;
+    reg        inst_icache_op_r;
+    reg [ 1:0] cacop_mode_r;
     
     // TLBSRCH result registers
     reg        tlbsrch_found_r;
@@ -450,6 +463,9 @@ module stage_ex(
             invtlb_op_r    <= 5'b0;
             invtlb_asid_r  <= 10'b0;
             invtlb_vaddr_r <= 32'h0;
+            inst_dcache_op_r <= 1'b0;
+            inst_icache_op_r <= 1'b0;
+            cacop_mode_r     <= 2'b0;
         end else if (pipe.refreshing) begin
             csr_en_r    <= input_csr_en;
             csr_num_r   <= input_csr_num;
@@ -467,6 +483,9 @@ module stage_ex(
             invtlb_op_r    <= input_invtlb_op;
             invtlb_asid_r  <= input_invtlb_asid;
             invtlb_vaddr_r <= input_invtlb_vaddr;
+            inst_dcache_op_r <= input_inst_dcache_op;
+            inst_icache_op_r <= input_inst_icache_op;
+            cacop_mode_r     <= input_cacop_mode;
         end
     end
 
@@ -506,6 +525,11 @@ module stage_ex(
     assign output_invtlb_op    = invtlb_op_r;
     assign output_invtlb_asid  = invtlb_asid_r;
     assign output_invtlb_vaddr = invtlb_vaddr_r;
+
+    // Cache Op outputs
+    assign output_inst_dcache_op = inst_dcache_op_r & valid;
+    assign output_inst_icache_op = inst_icache_op_r & valid;
+    assign output_cacop_mode     = cacop_mode_r;
     
     // TLBSRCH result outputs
     assign output_tlbsrch_found = tlbsrch_found;

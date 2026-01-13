@@ -371,7 +371,7 @@ module mycpu_top(
     assign if_meta_tlb_index = if_ex_tlb ? s0_index : 4'h0;
     assign if_meta_tlb_ps    = if_ex_tlb ? s0_ps    : 6'h0;
 
-    assign inst_sram_req = ~addr_sent & ~if_ex_tlb & ~if_pc_adef;
+    assign inst_sram_req = ~addr_sent & ~if_ex_tlb & ~if_pc_adef & ~mem_inst_icache_op;
     assign inst_sram_addr  = inst_paddr;
     assign inst_sram_wr    = 1'b0;
     assign inst_sram_size  = 2'b10; // word
@@ -382,17 +382,19 @@ module mycpu_top(
         .clk(clk),
         .resetn(resetn),
 
-        .valid(inst_sram_req),
+        .valid(inst_sram_req | mem_inst_icache_op),
         .op(inst_sram_wr),
-        .index(inst_vaddr[11:4]),
-        .tag(inst_paddr[31:12]),
-        .offset(inst_vaddr[3:0]),
+        .index(mem_inst_icache_op ? data_vaddr[11:4] : inst_vaddr[11:4]),
+        .tag(mem_inst_icache_op ? data_paddr[31:12] : inst_paddr[31:12]),
+        .offset(mem_inst_icache_op ? data_vaddr[3:0] : inst_vaddr[3:0]),
         .wstrb(inst_sram_wstrb),
         .wdata(inst_sram_wdata),
-        .cacheable(inst_cacheable),
+        .cacheable(mem_inst_icache_op ? 1'b1 : inst_cacheable), // Explicitly cacheable for CACOP? Or use data_cacheable? CACOP usually valid in cacheable areas.
         .addr_ok(inst_sram_addr_ok),
         .data_ok(inst_sram_data_ok),
         .rdata(inst_sram_rdata),
+        .cacop(mem_inst_icache_op),
+        .cacop_mode(mem_cacop_mode),
 
         .rd_req(icache_rd_req),
         .rd_type(icache_rd_type),
@@ -428,6 +430,8 @@ module mycpu_top(
         .addr_ok(data_sram_addr_ok),
         .data_ok(data_sram_data_ok),
         .rdata(data_sram_rdata),
+        .cacop(mem_inst_dcache_op),
+        .cacop_mode(mem_cacop_mode),
 
         .rd_req(dcache_rd_req),
         .rd_type(dcache_rd_type),
@@ -1037,6 +1041,10 @@ module mycpu_top(
     wire [3:0]  id_tlb_index_out;
     wire [5:0]  id_tlb_ps_out;
 
+    wire        id_inst_icache_op;
+    wire        id_inst_dcache_op;
+    wire [ 1:0] id_cacop_mode;
+
     stage_id u_stage_id(
         .clk(clk),
         .rst(rst),
@@ -1110,8 +1118,9 @@ module mycpu_top(
         .output_invtlb_vaddr(id_invtlb_vaddr),
 
         // Cache instructions
-        .output_inst_cacop(),
-        .output_cacop_code(),
+        .output_inst_dcache_op(id_inst_dcache_op),
+        .output_inst_icache_op(id_inst_icache_op),
+        .output_cacop_mode(id_cacop_mode),
 
         .output_ex_valid(id_ex_valid),
         .output_ecode(id_ecode),
@@ -1124,6 +1133,10 @@ module mycpu_top(
     wire        ex_tlb_found_out;
     wire [3:0]  ex_tlb_index_out;
     wire [5:0]  ex_tlb_ps_out;
+
+    wire        ex_inst_icache_op;
+    wire        ex_inst_dcache_op;
+    wire [ 1:0] ex_cacop_mode;
 
     stage_ex u_stage_ex(
         .clk(clk),
@@ -1202,6 +1215,14 @@ module mycpu_top(
         .output_invtlb_asid(ex_invtlb_asid),
         .output_invtlb_vaddr(ex_invtlb_vaddr),
         
+        // Cache instructions
+        .input_inst_dcache_op(id_inst_dcache_op),
+        .input_inst_icache_op(id_inst_icache_op),
+        .input_cacop_mode(id_cacop_mode),
+        .output_inst_dcache_op(ex_inst_dcache_op),
+        .output_inst_icache_op(ex_inst_icache_op),
+        .output_cacop_mode(ex_cacop_mode),
+        
         // TLBSRCH result
         .tlbsrch_found(s1_found),
         .tlbsrch_index(s1_index),
@@ -1242,6 +1263,10 @@ module mycpu_top(
     wire        mem_tlb_found_out;
     wire [3:0]  mem_tlb_index_out;
     wire [5:0]  mem_tlb_ps_out;
+
+    wire        mem_inst_icache_op;
+    wire        mem_inst_dcache_op;
+    wire [ 1:0] mem_cacop_mode;
 
     stage_mem u_stage_mem(
         .clk(clk),
@@ -1313,6 +1338,14 @@ module mycpu_top(
         .output_invtlb_op(),
         .output_invtlb_asid(mem_invtlb_asid),
         .output_invtlb_vaddr(mem_invtlb_vaddr),
+
+        // Cache instructions
+        .input_inst_dcache_op(ex_inst_dcache_op),
+        .input_inst_icache_op(ex_inst_icache_op),
+        .input_cacop_mode(ex_cacop_mode),
+        .output_inst_dcache_op(mem_inst_dcache_op),
+        .output_inst_icache_op(mem_inst_icache_op),
+        .output_cacop_mode(mem_cacop_mode),
         
         .input_tlbsrch_found(u_stage_ex.output_tlbsrch_found),
         .input_tlbsrch_index(u_stage_ex.output_tlbsrch_index),
