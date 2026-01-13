@@ -331,7 +331,7 @@ module stage_ex(
 
     wire is_store = op_st_w | op_st_h | op_st_b;
     wire is_load  = op_ld_w | op_ld_h | op_ld_hu | op_ld_b | op_ld_bu;
-    wire is_mem_op = is_store | is_load | input_inst_dcache_op; // Treat D-Cache CACOP as memory op for request trigger
+    wire is_mem_op = is_store | is_load | inst_dcache_op_r | inst_icache_op_r; // Treat CACOP as memory op for request trigger
 
     assign output_is_mem_op = is_mem_op; 
 
