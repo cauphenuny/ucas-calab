@@ -613,8 +613,8 @@ end
 
 /***************** OUTPUT SIGNALS *****************/
 
-assign addr_ok = (main_state == MAIN_IDLE && valid && !write_conflict)
-               | (main_state == MAIN_LOOKUP && valid && !write_conflict && (effective_hit || !buf_cacheable));
+assign addr_ok = // (main_state == MAIN_IDLE && valid && !write_conflict)
+                 (main_state == MAIN_LOOKUP && valid && !write_conflict && (effective_hit || !buf_cacheable));
 
 assign rdata = {32{main_state == MAIN_LOOKUP}} & hit_word
              | {32{main_state == MAIN_REFILL}} & refill_word;
