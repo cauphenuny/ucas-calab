@@ -1,6 +1,6 @@
-\subsection{ICache 集成（exp21）}
+\subsection{ICache 集成}
 
-将 Cache 模块作为 ICache 集成到 CPU 取指通路中，需要适配 pre-IF 级与 IF 级之间的数据流和控制流，并修改 AXI 总线接口模块以支持 Burst 传输。
+需适配 pre-IF 级与 IF 级之间的数据流和控制流，并修改 AXI 总线接口模块以支持 Burst 传输。
 
 \subsubsection{ICache 实例化与接口连接}
 
@@ -21,135 +21,32 @@ cache #(
     .wstrb(4'b0),
     .wdata(32'b0),
     .cacheable(inst_mat != 2'b10),  // MAT != 2'b10 表示可缓存
-    .addr_ok(inst_sram_addr_ok),
-    .data_ok(inst_sram_data_ok),
-    .rdata(inst_sram_rdata),
+    // ... 略
     .cacop(if_inst_icache_op),      // CACOP 操作 ICache
     .cacop_mode(if_cacop_mode),
     
     // AXI 侧接口
     .rd_req(icache_rd_req),
     .rd_type(icache_rd_type),
+    // ... 略
     .rd_addr(icache_rd_addr),
-    .rd_rdy(icache_rd_rdy),
-    .ret_valid(icache_ret_valid),
-    .ret_last(icache_ret_last),
-    .ret_data(icache_ret_data),
-    .wr_req(icache_wr_req),
-    .wr_type(icache_wr_type),
-    .wr_addr(icache_wr_addr),
-    .wr_data(icache_wr_data),
-    .wr_wstrb(icache_wr_wstrb),
-    .wr_rdy(icache_wr_rdy)
 );
 
 // ICache 不会发起写请求，wr_rdy 恒为 1
 assign icache_wr_rdy = 1'b1;
 \end{lstlisting}
 
-关键连接说明：
+说明：
 \begin{itemize}
     \item \textbf{Index 使用虚地址}：VIPT 设计，使用虚地址 [11:4] 索引 Cache
     \item \textbf{Tag 使用物理地址}：Tag 比较使用 TLB 转换后的物理地址 [31:12]
     \item \textbf{可缓存判断}：根据 MAT（Memory Access Type）域判断是否可缓存
-    \item \textbf{CACOP 支持}：CACOP 指令可以操作 ICache 进行初始化或失效
-\end{itemize}
-
-\subsubsection{取指地址翻译}
-
-\begin{lstlisting}[language=Verilog, caption=取指地址翻译逻辑]
-// TLB 查找（IF 级）
-wire [18:0] if_s0_vppn = if_pc[31:13];
-wire        if_s0_va_bit12 = if_pc[12];
-
-tlb_searcher #(.TLBNUM(TLBNUM)) u_tlb_s0 (
-    // TLB 表项输入（省略...）
-    .vppn(if_s0_vppn),
-    .va_bit12(if_s0_va_bit12),
-    .asid(csr_asid[`CSR_ASID_ASID]),
-    
-    .found(if_s0_found),
-    .index(if_s0_index),
-    .ppn(if_s0_ppn),
-    .ps(if_s0_ps),
-    .plv(if_s0_plv),
-    .mat(if_s0_mat),
-    .v(if_s0_v)
-);
-
-// 三级地址翻译
-assign if_da = csr_crmd[`CSR_CRMD_DA] && !csr_crmd[`CSR_CRMD_PG];
-assign if_dmw0_hit = (if_pc[31:29] == csr_dmw0[31:29]) && 
-                     dmw_plv_allowed(csr_dmw0, csr_crmd[`CSR_CRMD_PLV]);
-assign if_dmw1_hit = (if_pc[31:29] == csr_dmw1[31:29]) && 
-                     dmw_plv_allowed(csr_dmw1, csr_crmd[`CSR_CRMD_PLV]);
-
-// 物理地址与访问类型生成
-assign inst_paddr = if_da ? if_pc :
-                    if_dmw0_hit ? {csr_dmw0[`CSR_DMW_PSEG], if_pc[27:0]} :
-                    if_dmw1_hit ? {csr_dmw1[`CSR_DMW_PSEG], if_pc[27:0]} :
-                    if_s0_found ? {if_s0_ppn, if_pc[11:0]} :
-                    if_pc;  // TLB Miss 时仍使用虚地址（会触发异常）
-
-assign inst_mat = if_da ? csr_crmd[`CSR_CRMD_DATF] :
-                  if_dmw0_hit ? csr_dmw0[`CSR_DMW_MAT] :
-                  if_dmw1_hit ? csr_dmw1[`CSR_DMW_MAT] :
-                  if_s0_found ? if_s0_mat :
-                  2'b10;  // TLB Miss 默认为非缓存
-\end{lstlisting}
-
-地址翻译优先级：
-\begin{enumerate}
-    \item \textbf{直接地址翻译}：CSR.CRMD.DA=1 时，物理地址=虚地址
-    \item \textbf{直接映射窗口}：DMW0/1 命中，物理地址=DMW.PSEG+VA[27:0]
-    \item \textbf{TLB 映射}：TLB 命中，物理地址=PPN+VA[11:0]
-\end{enumerate}
-
-\subsubsection{流水线控制}
-
-\begin{lstlisting}[language=Verilog, caption=pre-IF 和 IF 级控制逻辑]
-// pre-IF 级：发起取指请求
-assign inst_sram_req = if_allowin && !flush && !flushed;
-assign inst_sram_addr = next_pc;
-
-// IF 级：接收指令数据
-assign if_allowin = !if_validout || if_allowout;
-assign if_allowout = id_allowin || !if_validout;
-assign if_validin = inst_sram_req && inst_sram_addr_ok;
-
-always @(posedge clk) begin
-    if (rst || flush) begin
-        if_validout <= 1'b0;
-    end else if (if_allowin) begin
-        if_validout <= if_validin;
-    end
-end
-
-// IF 级数据寄存
-always @(posedge clk) begin
-    if (rst) begin
-        if_pc <= 32'h0;
-        if_inst <= 32'h0;
-    end else if (if_validin && if_allowin) begin
-        if_pc <= inst_sram_addr;
-        if_inst <= inst_sram_data_ok ? inst_sram_rdata : if_inst;
-    end else if (inst_sram_data_ok && if_validout) begin
-        if_inst <= inst_sram_rdata;  // Cache Miss 返回时更新
-    end
-end
-\end{lstlisting}
-
-控制流说明：
-\begin{itemize}
-    \item \textbf{if\_allowin}：IF 级为空或可以流出时允许新指令进入
-    \item \textbf{if\_validin}：请求被 Cache 接收（addr\_ok=1）
-    \item \textbf{if\_validout}：IF 级有有效指令
-    \item Cache Miss 时，IF 级阻塞等待 data\_ok，指令数据返回后继续流水
+    \item \textbf{CACOP}：CACOP 指令可以操作 ICache 进行初始化或失效
 \end{itemize}
 
 \subsubsection{AXI Burst 传输支持}
 
-为支持 Cache 行的高效读写，AXI 总线接口模块需要支持 Burst 传输模式：
+AXI 总线接口模块需要支持 Burst 传输模式：
 
 \begin{lstlisting}[language=Verilog, caption=AXI Bridge Burst 传输]
 // 读通道状态机
@@ -172,11 +69,7 @@ always @(*) begin
             arvalid = 1'b1;
         end else if (dcache_rd_req) begin
             arid = 4'b0010;  // DCache ID
-            araddr = dcache_rd_addr;
-            arlen = (dcache_rd_type == 3'b100) ? 8'd3 : 8'd0;
-            arsize = 3'b010;
-            arburst = 2'b01;
-            arvalid = 1'b1;
+            // ... 类似 ICache ，略
         end
     end
 end
@@ -200,18 +93,13 @@ end
 assign icache_ret_valid = (r_state == R_INST) && rvalid;
 assign icache_ret_last = (inst_burst_cnt == 4'd3) && rlast;
 assign icache_ret_data = rdata;
-
-assign dcache_ret_valid = (r_state == R_DATA) && rvalid;
-assign dcache_ret_last = (data_burst_cnt == 4'd3) && rlast;
-assign dcache_ret_data = rdata;
+// DCache 返回信号类似，略
 \end{lstlisting}
 
-Burst 传输要点：
+关键设计说明：
 \begin{itemize}
     \item \textbf{arlen 设置}：Cache 行访问 arlen=3（4 拍），字访问 arlen=0（1 拍）
-    \item \textbf{Burst 计数}：跟踪已接收的数据拍数，判断 Burst 是否完成
-    \item \textbf{ID 区分}：ICache 和 DCache 使用不同的 ID 标识请求来源
-    \item \textbf{last 信号}：ret\_last 在最后一拍数据返回时置 1
+    \item \textbf{Burst 计数}：通过记录已接收的数据拍数，判断 Burst 是否完成
 \end{itemize}
 
 \subsubsection{CACOP 指令对 ICache 的操作}
@@ -234,7 +122,7 @@ always @(posedge clk) begin
     end
 end
 
-// CACOP 操作 ICache 后需要清空流水线
+// CACOP 操作 ICache 后需清空流水线
 wire icache_cacop_flush = wb_inst_icache_op && wb_validout;
 
 assign flush = wb_ex || ertn_flush || br_taken || icache_cacop_flush;

@@ -1,6 +1,6 @@
-\subsection{Cache 模块设计（exp20）}
+\subsection{Cache 模块设计}
 
-Cache 模块是整个 Cache 系统的核心，负责数据的缓存、命中判断、替换策略以及与 AXI 总线的交互。模块采用 2 路组相联结构，每路 4KB，Cache 行大小 16B，支持 VIPT 访问方式和写回写分配策略。
+模块采用 2 路组相联结构，每路 4KB，Cache 行大小 16B，支持 VIPT 访问方式和写回写分配策略。
 
 \subsubsection{辅助模块：Selector}
 

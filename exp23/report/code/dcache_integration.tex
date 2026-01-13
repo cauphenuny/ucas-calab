@@ -1,4 +1,4 @@
-\subsection{DCache 集成（exp22）}
+\subsection{DCache 集成}
 
 将 Cache 模块作为 DCache 集成到 CPU 访存通路中，需要处理 EX 级与 MEM 级的握手协议、非缓存访问的统一处理，以及强序非缓存的顺序性保证。
 
@@ -20,140 +20,29 @@ cache #(
     .wstrb(data_sram_wstrb),
     .wdata(data_sram_wdata),
     .cacheable(data_mat != 2'b10),  // MAT != 2'b10 表示可缓存
-    .addr_ok(data_sram_addr_ok),
-    .data_ok(data_sram_data_ok),
-    .rdata(data_sram_rdata),
+    // ... 略
     .cacop(ex_inst_dcache_op),      // CACOP 操作 DCache
     .cacop_mode(ex_cacop_mode),
     
     // AXI 侧接口
-    .rd_req(dcache_rd_req),
-    .rd_type(dcache_rd_type),
-    .rd_addr(dcache_rd_addr),
-    .rd_rdy(dcache_rd_rdy),
-    .ret_valid(dcache_ret_valid),
-    .ret_last(dcache_ret_last),
-    .ret_data(dcache_ret_data),
-    .wr_req(dcache_wr_req),
-    .wr_type(dcache_wr_type),
-    .wr_addr(dcache_wr_addr),
-    .wr_data(dcache_wr_data),
-    .wr_wstrb(dcache_wr_wstrb),
-    .wr_rdy(dcache_wr_rdy)
+    // ... 略
 );
 \end{lstlisting}
 
-与 ICache 的主要区别：
+与 ICache 的区别：
 \begin{itemize}
     \item \textbf{支持读写}：\verb|op| 信号区分读写操作，写操作需要 \verb|wstrb| 和 \verb|wdata|
-    \item \textbf{需要写通道}：DCache 会发起写请求，\verb|wr_rdy| 来自 AXI Bridge
     \item \textbf{CACOP 来自 EX 级}：数据 Cache 操作在 EX 级进行
 \end{itemize}
 
-\subsubsection{访存地址翻译}
-
-\begin{lstlisting}[language=Verilog, caption=访存地址翻译逻辑]
-// TLB 查找（EX 级）
-wire [18:0] ex_s1_vppn = data_vaddr[31:13];
-wire        ex_s1_va_bit12 = data_vaddr[12];
-
-tlb_searcher #(.TLBNUM(TLBNUM)) u_tlb_s1 (
-    // TLB 表项输入（省略...）
-    .vppn(ex_s1_vppn),
-    .va_bit12(ex_s1_va_bit12),
-    .asid(csr_asid[`CSR_ASID_ASID]),
-    
-    .found(ex_s1_found),
-    .index(ex_s1_index),
-    .ppn(ex_s1_ppn),
-    .ps(ex_s1_ps),
-    .plv(ex_s1_plv),
-    .mat(ex_s1_mat),
-    .d(ex_s1_d),
-    .v(ex_s1_v)
-);
-
-// 三级地址翻译
-assign ex_da = csr_crmd[`CSR_CRMD_DA] && !csr_crmd[`CSR_CRMD_PG];
-assign ex_dmw0_hit = (data_vaddr[31:29] == csr_dmw0[31:29]) && 
-                     dmw_plv_allowed(csr_dmw0, csr_crmd[`CSR_CRMD_PLV]);
-assign ex_dmw1_hit = (data_vaddr[31:29] == csr_dmw1[31:29]) && 
-                     dmw_plv_allowed(csr_dmw1, csr_crmd[`CSR_CRMD_PLV]);
-
-// 物理地址与访问类型生成
-assign data_paddr = ex_da ? data_vaddr :
-                    ex_dmw0_hit ? {csr_dmw0[`CSR_DMW_PSEG], data_vaddr[27:0]} :
-                    ex_dmw1_hit ? {csr_dmw1[`CSR_DMW_PSEG], data_vaddr[27:0]} :
-                    ex_s1_found ? {ex_s1_ppn, data_vaddr[11:0]} :
-                    data_vaddr;
-
-assign data_mat = ex_da ? csr_crmd[`CSR_CRMD_DATM] :
-                  ex_dmw0_hit ? csr_dmw0[`CSR_DMW_MAT] :
-                  ex_dmw1_hit ? csr_dmw1[`CSR_DMW_MAT] :
-                  ex_s1_found ? ex_s1_mat :
-                  2'b10;
-
-// 访存异常检测
-wire ex_tlb_refill = !ex_da && !ex_dmw0_hit && !ex_dmw1_hit && !ex_s1_found;
-wire ex_page_invalid = ex_s1_found && !ex_s1_v;
-wire ex_page_dirty = is_store && ex_s1_found && !ex_s1_d;
-wire ex_page_priv = ex_s1_found && (ex_s1_plv < csr_crmd[`CSR_CRMD_PLV]);
-\end{lstlisting}
-
-与取指地址翻译的区别：
-\begin{itemize}
-    \item \textbf{DA 模式使用 DATM}：直接地址翻译模式下，访存使用 DATM 域
-    \item \textbf{检查 D 位}：写操作需要检查 Dirty 位，D=0 时触发 Page Dirty 异常
-    \item \textbf{检查特权等级}：页表项的 PLV 不能低于当前 PLV
-\end{itemize}
-
-\subsubsection{流水线控制}
+\subsubsection{流水线控制更改}
 
 \begin{lstlisting}[language=Verilog, caption=EX 和 MEM 级控制逻辑]
 // EX 级：发起访存请求
 wire is_mem_op = is_store || is_load || ex_inst_dcache_op;
-
-assign data_sram_req = ex_validout && is_mem_op && !ex_ex_valid;
-assign data_sram_wr = is_store;
-assign data_sram_addr = data_vaddr;
-assign data_sram_wstrb = ex_mem_wstrb;
-assign data_sram_wdata = ex_mem_wdata;
-
-// MEM 级：接收访存数据
-assign mem_allowin = !mem_validout || mem_allowout;
-assign mem_allowout = wb_allowin || !mem_validout;
-
-// 请求地址被接收后可以流水
-assign ex_allowout = (mem_allowin && !is_mem_op) ||
-                     (mem_allowin && is_mem_op && data_sram_addr_ok);
-
-always @(posedge clk) begin
-    if (rst || flush) begin
-        mem_validout <= 1'b0;
-    end else if (mem_allowin) begin
-        mem_validout <= ex_validout && ex_allowout;
-    end
-end
-
-// 数据返回后可以流水
-assign mem_ready_go = !is_mem_op_r || data_sram_data_ok;
-assign mem_allowout = mem_ready_go && wb_allowin;
-
-// MEM 级数据寄存
-always @(posedge clk) begin
-    if (rst) begin
-        mem_data <= 32'h0;
-    end else if (data_sram_data_ok && mem_validout) begin
-        mem_data <= data_sram_rdata;
-    end
-end
 \end{lstlisting}
 
-控制流关键点：
 \begin{itemize}
-    \item \textbf{地址握手与流水}：EX 级在 \verb|addr_ok=1| 时可流入 MEM 级
-    \item \textbf{数据等待}：MEM 级在 \verb|data_ok=1| 时可流入 WB 级
-    \item \textbf{写操作放行}：写操作的 \verb|data_ok| 在 LOOKUP 阶段即置 1，不阻塞流水
     \item \textbf{CACOP 处理}：CACOP 操作 DCache 视为访存操作，占用访存端口
 \end{itemize}
 

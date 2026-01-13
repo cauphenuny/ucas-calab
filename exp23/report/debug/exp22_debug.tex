@@ -1,3 +1,34 @@
-\subsection{exp22}
+\subsection{exp22 - DCache 集成}
 
-\subsubsection{}
+\subsubsection{引入非缓存访问的相关问题}
+
+本次实验需要将 DCache 集成到 CPU 中，为此必须考虑非缓存类型的访存操作。一开始我们没有专门处理非缓存访问，直接把所有访存操作都放进 Cache，这时的 CPU 虽然能一直运行而不出错，但外设的状态和控制寄存器也被放进 Cache，导致用于指示测试状态的信号没有被及时更新。好在这个问题在仿真阶段就被发现，因为仿真时控制台中一直没有出现类似 \verb|Number 8'd01 Functional Test Point PASs!!!| 的信息。
+
+刚引入非缓存访问时，CPU 又开始出现错误。具体的现象是：CPU 从复位到出错之间的时间一直处于直接地址翻译模式，取指和 load/store 指令的访存类型均为 Uncached（SUC）。第一次取指时 ICache 能够将 \verb|data_ok| 拉高，但此后该信号一直为低，导致 CPU 卡死。
+
+经过排查我们发现，问题在于之前把 Cache 从内存读取数据（指令）的结束判断条件设置为 \verb|rpbuf_numrecv==buf_bank|，这对于 cacheable 的情况是成立的；但在非缓存访问中，每次取指只取 1 条指令（而不是引入 Cache 时的连续 4 条），这就导致 \verb|rpbuf_numrecv| 和 \verb|buf_bank| 出现了错位。要修复这个问题，需要给 cached 和 uncached 两种情况分别设置判断条件。\verb|data_ok| 在 REFILL 阶段对 uncached 读直接在 ret_valid 即拉高，不再依赖 rpbuf_numrecv==buf_bank；cacheable 流程保持原来的 bank 匹配逻辑。
+
+\begin{lstlisting}[language=Verilog]
+// replace buffer
+always @(posedge clk) begin
+    if (!resetn) begin
+        rpbuf_numrecv <= 0;
+    end else if (repl2ref) begin
+        rpbuf_numrecv <= 0;
+-   end else if (is_refill && ret_valid) begin
++   end else if (is_refill && ret_valid && buf_cacheable) begin
+        rpbuf_numrecv <= rpbuf_numrecv + 1;
+    end
+end
+\end{lstlisting}
+
+\begin{lstlisting}[language=Verilog]
++   wire refill_data_ok = (main_state == MAIN_REFILL) && ret_valid && ~buf_isstore
++                   && (buf_cacheable ? (rpbuf_numrecv == buf_bank) : 1'b1);
+
+    assign data_ok = (main_state == MAIN_LOOKUP && effective_hit)
+                   | (main_state == MAIN_LOOKUP && buf_isstore && buf_cacheable)
+-                  | (main_state == MAIN_REFILL && ret_valid == 1'b1 && rpbuf_numrecv == buf_bank && ~buf_isstore)
++                  | refill_data_ok
+                   | uncached_store_ok;
+\end{lstlisting}

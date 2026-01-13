@@ -1,75 +1,14 @@
 \subsection{exp21 - ICache 集成}
 
-\subsubsection{Cache 地址查找时序错误导致访问错误 Cache 行}
+\subsubsection{Request Buffer 更新条件错误导致缺失请求地址更改}
 
-在初次集成 ICache 时，Cache 模块在所有状态都使用 \verb|buf_index| 等缓冲地址访问 RAM，导致 LOOKUP 状态时访问到错误的 Cache 行。
-
-\begin{lstlisting}[language=Verilog, caption=错误的地址使用]
-// 错误：所有状态都使用 buf_index
-cache_tagv_ram tagv_ram(
-    .clka(clk),
-    .ena(1'b1),
-    .wea(tagv_wen),
-    .addra(buf_index),  // 错误：LOOKUP 时应使用输入地址
-    .dina({wtag, wvalid}),
-    .douta({rtag, rvalid})
-);
-
-// Tag 比较也使用 buf_tag
-assign hit_way[i] = rvalid && rtag == buf_tag;  // 错误
-\end{lstlisting}
+最初 Request Buffer 在每次状态转换到 LOOKUP 时都更新，导致 Cache Miss 期间 PC 变化会覆盖掉当前正在处理的缺失请求地址。
 
 \noindent
-\textbf{问题现象：}Cache 命中率异常低，仿真波形显示 Tag 比较使用的是上一次请求的地址，而非当前请求的地址。部分本应命中的访问被误判为 Miss。
+\textbf{现象：}Cache Miss 处理期间，如果 PC 继续变化（如取下一条指令），Request Buffer 中的地址会被更新为新的 PC，导致缺失处理使用错误的地址向总线发起请求，返回的 Cache 行填充到错误的位置。
 
 \noindent
-\textbf{问题分析：}Request Buffer 中的 \verb|buf_index|、\verb|buf_tag| 等信号在时钟上升沿更新，但 \verb|is_lookup| 信号是组合逻辑产生的。当状态机从 IDLE 转换到 LOOKUP 时，\verb|is_lookup| 立即变为 1，此时 \verb|buf_index| 还没有更新，仍然是上一次请求的地址。这导致 RAM 访问了错误的 Cache 行，Tag 比较结果自然也是错误的。
-
-具体时序如下：
-\begin{itemize}
-    \item T0 周期末：接收请求 A，\verb|addr_ok=1|
-    \item T1 周期初：状态转 LOOKUP，\verb|is_lookup=1|（组合逻辑）
-    \item T1 周期初：\verb|buf_index| 还是旧值（时钟沿未到）
-    \item T1 周期中：RAM 开始访问旧的 \verb|buf_index|
-    \item T1 周期末：\verb|buf_index| 更新为请求 A 的地址（已经晚了）
-\end{itemize}
-
-\noindent
-\textbf{解决方法：}引入 \verb|lookup_index|、\verb|lookup_tag|、\verb|lookup_bank| 信号，在 LOOKUP 状态使用输入端口的地址，在其他状态使用缓冲的地址：
-
-\begin{lstlisting}[language=Verilog, caption=正确的地址选择]
-// 在 LOOKUP 时使用输入地址，其他状态使用 buffer 地址
-wire [WIDTH_INDEX-1:0] lookup_index = is_lookup ? index : buf_index;
-wire [WIDTH_TAG-1:0]   lookup_tag   = is_lookup ? tag   : buf_tag;
-wire [WIDTH_BANK-1:0]  lookup_bank  = is_lookup ? bank  : buf_bank;
-
-// Tag+Valid RAM 使用 lookup_index
-cache_tagv_ram tagv_ram(
-    .clka(clk),
-    .ena(1'b1),
-    .wea(tagv_wen),
-    .addra(lookup_index),  // 正确：LOOKUP 时使用输入地址
-    .dina({wtag, wvalid}),
-    .douta({rtag, rvalid})
-);
-
-// Tag 比较使用 lookup_tag
-assign hit_way[i] = rvalid && rtag == lookup_tag;
-
-// Bank RAM 地址也需要修改
-assign data_index = {WIDTH_INDEX{bank_lookup}} & lookup_index
-                  | {WIDTH_INDEX{bank_hitwrite}} & wrbuf_index
-                  | {WIDTH_INDEX{bank_replace | bank_refill}} & buf_index;
-
-// Bank 选择使用 lookup_bank
-wire bank_lookup = is_lookup && (lookup_bank == j);
-\end{lstlisting}
-
-这样确保 LOOKUP 状态下 RAM 访问使用的是当前请求的地址（直接来自输入端口），而不是还未更新的缓冲地址。
-
-\subsubsection{Request Buffer 更新条件错误导致地址污染}
-
-最初 Request Buffer 在每次状态转换到 LOOKUP 时都更新，导致 Cache Miss 期间 PC 变化会污染当前正在处理的缺失请求地址。
+\textbf{分析：}Cache Miss 后，状态机进入 MISS → REPLACE → REFILL 流程，此时应保持 Request Buffer 不变，使用缺失时的地址进行替换和重填。但若 Request Buffer 在任何 LOOKUP 转换时都更新，连续两次命中后的第三次缺失会导致 Buffer 被第二次的地址覆盖。
 
 \begin{lstlisting}[language=Verilog, caption=错误的 Buffer 更新条件]
 // 错误：只要进入 LOOKUP 就更新
@@ -89,13 +28,7 @@ end
 \end{lstlisting}
 
 \noindent
-\textbf{问题现象：}Cache Miss 处理期间，如果 PC 继续变化（如取下一条指令），Request Buffer 中的地址会被更新为新的 PC，导致缺失处理使用错误的地址向总线发起请求，返回的 Cache 行填充到错误的位置。
-
-\noindent
-\textbf{问题分析：}Cache Miss 后，状态机进入 MISS → REPLACE → REFILL 流程，此时应保持 Request Buffer 不变，使用缺失时的地址进行替换和重填。但若 Request Buffer 在任何 LOOKUP 转换时都更新，连续两次命中后的第三次缺失会导致 Buffer 被第二次的地址覆盖。
-
-\noindent
-\textbf{解决方法：}只在握手成功（\verb|valid && addr_ok|）时更新 Request Buffer，确保 Miss 处理期间地址不变：
+\textbf{解决：}只在握手成功（\verb|valid && addr_ok|）时更新 Request Buffer，确保 Miss 处理期间地址不变：
 
 \begin{lstlisting}[language=Verilog, caption=正确的 Buffer 更新条件]
 always @(posedge clk) begin
@@ -129,39 +62,33 @@ assign addr_ok = (main_state == MAIN_IDLE)
 \end{lstlisting}
 
 \noindent
-\textbf{问题现象：}流水线控制异常，IDLE 状态下即使没有请求也会置 \verb|addr_ok|，导致流水线错误地推进；LOOKUP 状态下即使缺失也会在转换前短暂置 \verb|addr_ok|。
+\textbf{现象：}流水线控制异常，IDLE 状态下即使没有请求也会置 \verb|addr_ok|，导致流水线错误推进；LOOKUP 状态下即使miss也会在转换前短暂置 \verb|addr_ok|。
 
 \noindent
-\textbf{问题分析：}
+\textbf{分析：}
 \begin{itemize}
     \item IDLE 状态：应该只有在 \verb|valid=1| 且无写冲突时才能接收请求
     \item LOOKUP 状态：只有命中且有新的有效请求才能继续接收，缺失时应阻塞
 \end{itemize}
 
 \noindent
-\textbf{解决方法：}
+\textbf{解决：}
 
 \begin{lstlisting}[language=Verilog, caption=正确的 addr_ok 生成]
 assign addr_ok = (main_state == MAIN_IDLE && valid && !write_conflict)
                | (main_state == MAIN_LOOKUP && hit && valid && !write_conflict);
 \end{lstlisting}
 
-这样确保：
-\begin{itemize}
-    \item IDLE 状态只有在有有效请求且无冲突时接收
-    \item LOOKUP 状态只有在命中且有新请求且无冲突时继续接收
-    \item Miss 时自动阻塞，\verb|addr_ok=0|
-\end{itemize}
 
 \subsubsection{TLBRD 指令 CSR 冒险未处理}
 
-TLBRD 指令在 WB 级写入 TLBIDX、TLBEHI、TLBELO0、TLBELO1 等 CSR，但 ID 级的 CSR 读指令（CSRRD/CSRXCHG）可能读到旧值。
+TLBRD 指令在 WB 级写入 CSR，但 ID 级的 CSR 读指令（CSRRD/CSRXCHG）可能读到旧值。
 
 \noindent
-\textbf{问题现象：}执行 TLBRD 后立即用 CSRRD 读取 TLBEHI，读到的是 TLBRD 执行前的旧值，而非 TLB 表项中的值，导致功能测试失败。
+\textbf{现象：}执行 TLBRD 后立即用 CSRRD 读取 TLBEHI，读到的是 TLBRD 执行前的旧值，而非 TLB 表项中的值。
 
 \noindent
-\textbf{问题分析：}类似于 TLBSRCH 写 TLBIDX 的冒险问题，TLBRD 在 WB 级写多个 TLB 相关 CSR。如果后续指令在 ID 级读取这些 CSR，由于 CSR 写发生在 WB 级，读发生在 ID 级，存在 3 级流水线间隔，会读到旧值。
+\textbf{分析：}之前的实验中未暴露该问题，可能是流水线在相关指令处会停顿，掩盖了冒险现象。使用cache后，流水线变快变紧凑，冒险问题暴露。
 
 已有的冒险检测只处理了 TLBSRCH 写 TLBIDX 的情况：
 \begin{lstlisting}[language=Verilog]
@@ -170,10 +97,8 @@ wire id_stall_tlbidx = id_reads_tlbidx &
     (ex_pending_tlbsrch | mem_pending_tlbsrch | wb_pending_tlbsrch);
 \end{lstlisting}
 
-但未处理 TLBRD 写其他 CSR 的冒险。
-
 \noindent
-\textbf{解决方法：}增加 TLBRD CSR 冒险检测，阻塞读取 TLBRD 写入的 CSR：
+\textbf{解决：}增加 TLBRD CSR 冒险检测，阻塞读取 TLBRD 写入的 CSR：
 
 \begin{lstlisting}[language=Verilog, caption=TLBRD CSR 冒险处理]
 // TLBRD writes TLBIDX/TLBEHI/TLBELO0/TLBELO1 in WB. 
@@ -195,5 +120,3 @@ wire id_stall_tlbrd_csr = id_reads_tlbrd_csr &
 wire id_stall = id_stall1 | id_stall2 | id_stall_csr | 
                 id_stall_tlbsrch | id_stall_tlbidx | id_stall_tlbrd_csr;
 \end{lstlisting}
-
-这样确保读取 TLBRD 写入的 CSR 时，会等待 TLBRD 在 WB 级提交完成，读到正确的值。
