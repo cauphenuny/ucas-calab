@@ -1246,7 +1246,7 @@ module mycpu_top(
         .data_sram_addr(data_sram_addr),
         .data_sram_wstrb(data_sram_wstrb),
         .data_sram_wdata(data_sram_wdata),
-        .data_sram_addr_ok(data_sram_addr_ok),
+        .data_sram_addr_ok(ex_inst_icache_op ? inst_sram_addr_ok : data_sram_addr_ok),
         
         // Address translation interface
         .data_vaddr(data_vaddr),

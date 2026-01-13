@@ -560,7 +560,7 @@ always @(*) begin
         end
 
         MAIN_REFILL: begin
-            if (ret_valid == 1'b1 && ret_last == 1'b1) begin
+            if (cacop_mode0 || (ret_valid == 1'b1 && ret_last == 1'b1)) begin
                 main_next_state = MAIN_IDLE;
             end else begin
                 main_next_state = MAIN_REFILL;
@@ -622,10 +622,11 @@ wire uncached_store_ok = (main_state == MAIN_REPLACE) && buf_isstore && !buf_cac
 wire refill_data_ok = (main_state == MAIN_REFILL) && ret_valid && ~buf_isstore
                 && (buf_cacheable ? (rpbuf_numrecv == buf_bank) : 1'b1);
 
-assign data_ok = (main_state == MAIN_LOOKUP && effective_hit)
+assign data_ok = ((main_state == MAIN_LOOKUP && effective_hit)
                | (main_state == MAIN_LOOKUP && buf_isstore && buf_cacheable)
                | refill_data_ok
-               | uncached_store_ok;
+               | uncached_store_ok
+) & !buf_cacop;
 
 wire uncached_store = buf_isstore && !buf_cacheable;
 wire uncached_load  = (~buf_isstore) && !buf_cacheable;
