@@ -533,10 +533,10 @@ always @(*) begin
         end
 
         MAIN_MISS: begin
-            if (need_writeback && wr_rdy == 1'b0) begin
+            if (need_writeback && wr_rdy == 1'b0) begin // write to memory at this MISS state
                 main_next_state = MAIN_MISS;
             end else begin
-                if (!cacop) begin
+                if (!buf_cacop) begin
                     main_next_state = MAIN_REPLACE; // need replace even if need_writeback == 0, to fetch new line
                 end else begin
                     main_next_state = MAIN_IDLE; // cacop does not replace/refill
