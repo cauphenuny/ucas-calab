@@ -1,0 +1,274 @@
+\subsection{CACOP 指令实现（exp23）}
+
+CACOP 指令用于 Cache 的初始化和维护操作。通过复用正常访问的数据通路，实现 Cache 行的失效、索引失效、命中失效等功能。
+
+\subsubsection{CACOP 指令译码}
+
+\begin{lstlisting}[language=Verilog, caption=CACOP 指令识别与译码]
+// ID 级译码
+wire inst_cacop_raw = (id_inst[31:22] == 10'b0000011000);
+wire [4:0] cacop_code = id_inst[4:0];
+
+// 判断是否为合法的 CACOP code
+wire cacop_code_valid = (cacop_code == 5'h00) ||  // Store Tag
+                        (cacop_code == 5'h01) ||  // Index Invalid
+                        (cacop_code == 5'h02) ||  // Hit Invalid
+                        (cacop_code == 5'h08) ||  // Index Writeback Invalid
+                        (cacop_code == 5'h09);    // Hit Writeback Invalid
+
+wire inst_cacop = inst_cacop_raw && cacop_code_valid;
+
+// 区分 ICache 和 DCache 操作
+wire inst_icache_op = inst_cacop && (cacop_code == 5'h00 || 
+                                     cacop_code == 5'h01 ||
+                                     cacop_code == 5'h02);
+wire inst_dcache_op = inst_cacop && (cacop_code == 5'h08 || 
+                                     cacop_code == 5'h09);
+
+// CACOP 模式编码
+wire [1:0] cacop_mode;
+assign cacop_mode = (cacop_code == 5'h00 || cacop_code == 5'h08) ? 2'h0 :  // Index
+                    (cacop_code == 5'h01 || cacop_code == 5'h09) ? 2'h1 :  // Hit WB
+                    (cacop_code == 5'h02) ? 2'h2 :                          // Hit
+                    2'h0;
+\end{lstlisting}
+
+CACOP 操作分类：
+\begin{itemize}
+    \item \textbf{code 0x00/0x08}：Index Invalid - 索引失效（mode 0）
+    \item \textbf{code 0x01/0x09}：Hit Writeback Invalid - 命中写回失效（mode 1）
+    \item \textbf{code 0x02}：Hit Invalid - 命中失效（mode 2）
+\end{itemize}
+
+\subsubsection{CACOP 在 Cache 模块中的实现}
+
+\begin{lstlisting}[language=Verilog, caption=CACOP 模式处理逻辑]
+// CACOP 模式判断
+assign cacop_mode0 = buf_cacop && (buf_cacop_mode == 2'h0);  // Index Invalid
+assign cacop_mode1 = buf_cacop && (buf_cacop_mode == 2'h1);  // Hit WB Invalid
+assign cacop_mode2 = buf_cacop && (buf_cacop_mode == 2'h2);  // Hit Invalid
+
+// CACOP 操作的路选择
+genvar i;
+generate
+for (i = 0; i < NUM_WAYS; i = i + 1) begin : gen_cacop_way
+    assign cacop_way[i] = buf_offset[WIDTH_WAY-1:0] == i[WIDTH_WAY-1:0];
+end
+endgenerate
+
+// Tag+Valid RAM 写使能
+assign tagv_wen = is_refill && (
+    // 正常 refill
+    replace_way[i] && buf_cacheable && 
+    (~cacop_mode0 && ~cacop_mode1 && ~cacop_mode2)
+    ||
+    // CACOP Index Invalid: 写 V=0
+    cacop_way[i] && cacop_mode0
+    ||
+    // CACOP Hit Invalid/Hit WB Invalid: 写 V=0
+    hit_way[i] && buf_cacheable && (cacop_mode1 || cacop_mode2)
+);
+
+// Tag 和 Valid 的写数据
+assign wtag = cacop_mode0 ? {WIDTH_TAG{1'b0}} : buf_tag;
+assign wvalid = ~cacop;  // CACOP 写 V=0，否则写 V=1
+\end{lstlisting}
+
+CACOP 实现要点：
+\begin{itemize}
+    \item \textbf{mode 0 - Index Invalid}：根据 \verb|buf_offset| 选择路，直接将 V 位写 0
+    \item \textbf{mode 1/2 - Hit Invalid}：先进行 Tag 比较，命中后将对应路的 V 位写 0
+    \item \textbf{复用 Refill 通路}：利用 Refill 状态的写使能逻辑，写入 V=0
+    \item \textbf{写回支持}：mode 1 在失效前先检查脏位，需要时写回内存
+\end{itemize}
+
+\subsubsection{CACOP 状态机调整}
+
+\begin{lstlisting}[language=Verilog, caption=CACOP 状态机转换]
+always @(*) begin
+    case (main_state)
+        MAIN_LOOKUP: begin
+            if (!effective_hit) begin
+                if (cacop_mode0) begin
+                    // Index Invalid: 直接进入 REFILL 写 V=0
+                    main_next_state = MAIN_REFILL;
+                end else begin
+                    // Hit WB/Hit Invalid: 需要先判断是否写回
+                    main_next_state = MAIN_MISS;
+                end
+            end else begin
+                // 正常命中逻辑...
+            end
+        end
+
+        MAIN_MISS: begin
+            if (need_writeback && !wr_rdy) begin
+                main_next_state = MAIN_MISS;
+            end else begin
+                if (!cacop) begin
+                    main_next_state = MAIN_REPLACE;  // 正常缺失需要 replace
+                end else begin
+                    main_next_state = MAIN_IDLE;     // CACOP Hit WB 不需要 refill
+                end
+            end
+        end
+
+        MAIN_REFILL: begin
+            if (cacop_mode0) begin
+                // Index Invalid: 不等待数据返回，直接完成
+                main_next_state = MAIN_IDLE;
+            end else begin
+                if (ret_valid && ret_last)
+                    main_next_state = MAIN_IDLE;
+                else
+                    main_next_state = MAIN_REFILL;
+            end
+        end
+        // ...
+    endcase
+end
+
+// 写回判断
+wire need_writeback = writeback_valid && writeback_dirty && 
+                      buf_cacheable && 
+                      (!cacop || (cacop_mode1 || cacop_mode2));
+\end{lstlisting}
+
+状态机调整说明：
+\begin{itemize}
+    \item \textbf{Index Invalid 快速路径}：LOOKUP → REFILL → IDLE，直接写 V=0
+    \item \textbf{Hit Invalid 检查写回}：LOOKUP → MISS → IDLE，检查脏位并写回
+    \item \textbf{Hit WB Invalid}：同 Hit Invalid，但 \verb|need_writeback| 包含 CACOP
+    \item \textbf{CACOP 不 Replace}：CACOP 指令不进入 REPLACE 状态读新数据
+\end{itemize}
+
+\subsubsection{CACOP 对 ICache 的特殊处理}
+
+\begin{lstlisting}[language=Verilog, caption=CACOP 操作 ICache 流水线清空]
+// stage_wb.v
+wire wb_inst_icache_op;  // CACOP 操作 ICache
+
+// mycpu_top.v
+wire icache_cacop_flush = wb_inst_icache_op && wb_validout;
+
+// 流水线刷新信号
+assign flush = wb_ex ||          // 异常
+               ertn_flush ||     // ERTN 返回
+               br_taken ||       // 分支跳转
+               icache_cacop_flush;  // ICache CACOP
+
+// 刷新后的 PC
+assign flush_pc = icache_cacop_flush ? wb_pc + 4 :  // CACOP 后继续下一条
+                  ertn_flush ? ex_ra :
+                  wb_ex ? ex_entry :
+                  br_target;
+\end{lstlisting}
+
+ICache CACOP 特殊处理原因：
+\begin{itemize}
+    \item \textbf{取指冲突}：CACOP 修改 ICache 内容与取指同时访问同一 Cache
+    \item \textbf{清空流水线}：CACOP 在 WB 级提交后，清空流水线并重新取指
+    \item \textbf{PC 更新}：刷新后从 CACOP 的下一条指令开始取指
+    \item \textbf{避免错误取指}：防止取到已失效的 Cache 行内容
+\end{itemize}
+
+\subsubsection{CACOP 对 DCache 的处理}
+
+\begin{lstlisting}[language=Verilog, caption=CACOP 操作 DCache]
+// stage_ex.v
+wire is_mem_op = is_store || is_load || input_inst_dcache_op;
+
+assign data_sram_req = ex_validout && is_mem_op && !ex_ex_valid;
+
+// DCache CACOP 使用虚地址
+assign data_sram_addr = data_vaddr;  // 使用计算的虚地址
+
+// CACOP 模式传递
+always @(posedge clk) begin
+    if (rst || flush) begin
+        ex_cacop_mode <= 2'b00;
+    end else if (ex_validin && ex_allowin) begin
+        ex_cacop_mode <= id_cacop_mode;
+    end
+end
+\end{lstlisting}
+
+DCache CACOP 处理要点：
+\begin{itemize}
+    \item \textbf{视为访存操作}：占用访存端口，与 Load/Store 互斥
+    \item \textbf{使用虚地址}：Index 来自虚地址 [11:4]，Tag 来自物理地址 [31:12]
+    \item \textbf{不清空流水线}：DCache CACOP 不影响取指，无需刷新
+    \item \textbf{地址翻译}：仍需 TLB 翻译获取物理 Tag 用于 Hit 判断
+\end{itemize}
+
+\subsubsection{CACOP 与正常访问的数据通路复用}
+
+\begin{lstlisting}[language=Verilog, caption=数据通路复用示意]
+// Tag+Valid RAM 地址
+wire [WIDTH_INDEX-1:0] tagv_index = is_lookup ? index : buf_index;
+
+// Tag+Valid RAM 写数据
+wire [WIDTH_TAG-1:0] wtag = cacop_mode0 ? {WIDTH_TAG{1'b0}} : buf_tag;
+wire wvalid = ~cacop;  // CACOP: wvalid=0, Normal: wvalid=1
+
+// Tag+Valid RAM 写使能
+wire tagv_wen = is_refill && (
+    // 正常 Refill
+    replace_way[i] && buf_cacheable && ~buf_cacop
+    ||
+    // CACOP Index Invalid
+    cacop_way[i] && cacop_mode0
+    ||
+    // CACOP Hit Invalid
+    hit_way[i] && buf_cacheable && (cacop_mode1 || cacop_mode2)
+);
+
+// 替换路选择
+assign writeback_way = (cacop && (cacop_mode1 || cacop_mode2)) ? 
+                       hit_way :     // CACOP Hit: 选中命中的路
+                       replace_way;  // Normal Miss: 选择替换的路
+
+// 写回判断
+wire need_writeback = writeback_valid && writeback_dirty && buf_cacheable &&
+                      (!cacop || (cacop_mode1 || cacop_mode2));
+\end{lstlisting}
+
+数据通路复用总结：
+\begin{itemize}
+    \item \textbf{Tag Compare}：CACOP Hit Invalid 复用 Tag 比较逻辑判断命中
+    \item \textbf{Refill Path}：CACOP 复用 Refill 通路写 Tag/Valid RAM
+    \item \textbf{Replace Path}：CACOP mode 1 复用 Replace 通路读脏数据并写回
+    \item \textbf{Way Selection}：通过 \verb|writeback_way| 多路选择器选择操作的路
+\end{itemize}
+
+\subsubsection{CACOP 初始化 Cache}
+
+\begin{lstlisting}[language=Verilog, caption=软件初始化 Cache 示例]
+// 初始化 ICache（汇编代码示意）
+li.w    $t0, 0              // index = 0
+li.w    $t1, 256            // total = 256 cache lines
+li.w    $t2, 0              // way = 0
+
+icache_init_loop:
+    slli.w  $t3, $t0, 4     // addr = index << 4
+    or      $t3, $t3, $t2   // addr |= way
+    cacop   0x0, $t3, 0     // Index Invalid ICache
+    addi.w  $t0, $t0, 1     // index++
+    blt     $t0, $t1, icache_init_loop
+
+// 初始化 DCache（类似流程）
+li.w    $t0, 0
+dcache_init_loop:
+    slli.w  $t3, $t0, 4
+    cacop   0x8, $t3, 0     // Index Invalid DCache
+    addi.w  $t0, $t0, 1
+    blt     $t0, $t1, dcache_init_loop
+\end{lstlisting}
+
+初始化流程说明：
+\begin{enumerate}
+    \item \textbf{遍历所有 Cache 行}：对每个 Index（0-255）执行 CACOP
+    \item \textbf{使用 Index Invalid}：将所有 Cache 行的 V 位清 0
+    \item \textbf{地址构造}：虚地址 = (index << 4) | way，way 位于低位
+    \item \textbf{分别初始化}：ICache 用 code 0x00，DCache 用 code 0x08
+\end{enumerate}

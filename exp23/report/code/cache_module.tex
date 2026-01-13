@@ -1,0 +1,371 @@
+\subsection{Cache 模块设计（exp20）}
+
+Cache 模块是整个 Cache 系统的核心，负责数据的缓存、命中判断、替换策略以及与 AXI 总线的交互。模块采用 2 路组相联结构，每路 4KB，Cache 行大小 16B，支持 VIPT 访问方式和写回写分配策略。
+
+\subsubsection{辅助模块：Selector}
+
+Cache 模块中存在大量的多路选择逻辑，将其封装为通用模块以提高代码复用性：
+
+\begin{lstlisting}[language=Verilog, caption=Selector 选择器模块]
+module selector #(
+    parameter integer DATA_WIDTH = 32,
+    parameter integer SEL_NUM = 16
+)(
+    input wire [SEL_NUM-1:0] sel,                    // one-hot 选择信号
+    input wire [DATA_WIDTH-1:0] in [SEL_NUM-1:0],   // 输入数据数组
+    output wire [DATA_WIDTH-1:0] out                 // 输出数据
+);
+
+wire [SEL_NUM-1:0] mat[DATA_WIDTH-1:0];
+
+// 转置：将 in[i][j] 转为 mat[j][i]
+genvar i, j;
+generate
+    for (i = 0; i < SEL_NUM; i = i + 1) begin
+        for (j = 0; j < DATA_WIDTH; j = j + 1) begin
+            assign mat[j][i] = sel[i] & in[i][j];
+        end
+    end
+endgenerate
+
+// 规约：对每一位进行或运算
+generate
+    for (i = 0; i < DATA_WIDTH; i = i + 1) begin
+        assign out[i] = |mat[i];
+    end
+endgenerate
+
+endmodule
+\end{lstlisting}
+
+该模块接收 one-hot 编码的选择信号 \verb|sel| 和数据数组 \verb|in|，输出选中的数据。实现原理：先将输入数据与选择信号按位与，再转置矩阵，最后用或运算规约。由于选择信号是 one-hot 编码，每位最多只有一个输入被选中，可直接用或规约。
+
+\subsubsection{Cache 存储结构}
+
+Cache 内部维护 12 张存储表，Way0 和 Way1 各包含：
+
+\begin{itemize}
+    \item \textbf{\{Tag,V\} RAM}：256×21 位，存储 Tag（20位）和 Valid 位（1位）
+    \item \textbf{Dirty Regfile}：256×1 位，标记 Cache 行是否被修改
+    \item \textbf{Bank RAM}：4 张 256×32 位，每个 Cache 行 16B 分为 4 个 Bank
+\end{itemize}
+
+\begin{lstlisting}[language=Verilog, caption=Cache 存储表组织结构]
+generate
+for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
+    // Dirty 位使用寄存器实现
+    reg [NUM_ELEM-1:0] dirty;
+    
+    always @(posedge clk) begin
+        if (!resetn) begin
+            dirty[j] <= 1'b0;
+        end else if (is_hitwrite && wrbuf_way[i] && wrbuf_index == j) begin
+            dirty[j] <= 1'b1;  // 写命中时置脏
+        end else if (is_refill && replace_way[i] && buf_cacheable && buf_index == j) begin
+            dirty[j] <= 1'b0;  // 重填时清除脏位
+        end
+    end
+
+    // Tag+Valid RAM (IP核)
+    cache_tagv_ram tagv_ram(
+        .clka(clk),
+        .ena(tagv_en),
+        .wea(tagv_wen),
+        .addra(lookup_index),
+        .dina({wtag, wvalid}),
+        .douta({rtag, rvalid})
+    );
+
+    // 4 个 Bank RAM
+    for (j = 0; j < NUM_BANKS; j = j + 1) begin : gen_bank
+        cache_data_ram data_ram(
+            .clka(clk),
+            .ena(en),
+            .wea(data_wstrb),      // 支持字节写使能
+            .addra(data_index),
+            .dina(data_wdata),
+            .douta(data_rdata)
+        );
+    end
+end
+endgenerate
+\end{lstlisting}
+
+\subsubsection{主状态机设计}
+
+主状态机控制 Cache 的访问流程，包括查找、缺失处理、替换和重填五个状态：
+
+\begin{lstlisting}[language=Verilog, caption=主状态机状态转换]
+localparam MAIN_IDLE    = 5'b00001;
+localparam MAIN_LOOKUP  = 5'b00010;
+localparam MAIN_MISS    = 5'b00100;
+localparam MAIN_REPLACE = 5'b01000;
+localparam MAIN_REFILL  = 5'b10000;
+
+always @(*) begin
+    case (main_state)
+        MAIN_IDLE: begin
+            if (valid && !write_conflict)
+                main_next_state = MAIN_LOOKUP;
+            else
+                main_next_state = MAIN_IDLE;
+        end
+
+        MAIN_LOOKUP: begin
+            if (!effective_hit) begin
+                if (cacop_mode0)
+                    main_next_state = MAIN_REFILL;  // CACOP Index Invalid
+                else
+                    main_next_state = MAIN_MISS;
+            end else begin
+                if (!valid || write_conflict)
+                    main_next_state = MAIN_IDLE;
+                else
+                    main_next_state = MAIN_LOOKUP;  // 继续接收新请求
+            end
+        end
+
+        MAIN_MISS: begin
+            if (need_writeback && !wr_rdy)
+                main_next_state = MAIN_MISS;       // 等待写缓冲就绪
+            else if (!cacop)
+                main_next_state = MAIN_REPLACE;
+            else
+                main_next_state = MAIN_IDLE;       // CACOP 不需要重填
+        end
+
+        MAIN_REPLACE: begin
+            if (uncached_store) begin
+                if (!wr_rdy)
+                    main_next_state = MAIN_REPLACE;
+                else
+                    main_next_state = MAIN_IDLE;
+            end else begin
+                if (!rd_rdy)
+                    main_next_state = MAIN_REPLACE; // 等待读请求被接收
+                else
+                    main_next_state = MAIN_REFILL;
+            end
+        end
+
+        MAIN_REFILL: begin
+            if (ret_valid && ret_last)
+                main_next_state = MAIN_IDLE;        // Cache 行填充完成
+            else
+                main_next_state = MAIN_REFILL;
+        end
+
+        default: main_next_state = MAIN_IDLE;
+    endcase
+end
+\end{lstlisting}
+
+状态转换说明：
+\begin{itemize}
+    \item \textbf{IDLE → LOOKUP}：接收到新的访问请求且无写冲突
+    \item \textbf{LOOKUP → MISS}：Cache 未命中（包括非缓存访问）
+    \item \textbf{MISS → REPLACE}：写缓冲就绪，可以发起替换读
+    \item \textbf{REPLACE → REFILL}：读请求被接收，开始等待数据返回
+    \item \textbf{REFILL → IDLE}：Cache 行最后一个字返回，重填完成
+\end{itemize}
+
+\subsubsection{Write Buffer 状态机}
+
+为避免 RAM 输出到输入的组合路径，Cache 命中写需要通过 Write Buffer 延迟一拍执行：
+
+\begin{lstlisting}[language=Verilog, caption=Write Buffer 状态机]
+localparam WB_IDLE  = 2'b01;
+localparam WB_WRITE = 2'b10;
+
+always @(*) begin
+    case (wb_state)
+        WB_IDLE: begin
+            if (main_state == MAIN_LOOKUP && buf_isstore && effective_hit)
+                wb_next_state = WB_WRITE;
+            else
+                wb_next_state = WB_IDLE;
+        end
+        WB_WRITE: begin
+            if (main_state == MAIN_LOOKUP && buf_isstore && effective_hit)
+                wb_next_state = WB_WRITE;  // 连续写
+            else
+                wb_next_state = WB_IDLE;
+        end
+        default: wb_next_state = WB_IDLE;
+    endcase
+end
+
+// Write Buffer 寄存器
+always @(posedge clk) begin
+    if (!resetn) begin
+        wrbuf_way   <= {NUM_WAYS{1'b0}};
+        wrbuf_bank  <= {WIDTH_BANK{1'b0}};
+        wrbuf_index <= {WIDTH_INDEX{1'b0}};
+        wrbuf_wstrb <= 4'b0000;
+        wrbuf_wdata <= 32'b0;
+    end else if (wb_next_state == WB_WRITE && buf_cacheable) begin
+        wrbuf_way   <= hit_way;
+        wrbuf_bank  <= buf_bank;
+        wrbuf_index <= buf_index;
+        wrbuf_wstrb <= buf_wstrb;
+        wrbuf_wdata <= buf_wdata;
+    end
+end
+\end{lstlisting}
+
+\subsubsection{Tag 比较与数据选择}
+
+\begin{lstlisting}[language=Verilog, caption=Tag 比较逻辑]
+// Tag 比较：判断各路是否命中
+generate
+for (i = 0; i < NUM_WAYS; i = i + 1) begin
+    assign hit_way[i] = rvalid && (rtag == lookup_tag);
+end
+endgenerate
+
+wire hit = |hit_way;  // 任意一路命中即为命中
+wire effective_hit = hit && buf_cacheable && 
+                     !(cacop_mode0 || cacop_mode1 || cacop_mode2);
+
+// 数据选择：从命中的路中选出对应 Bank 的数据
+selector #(.DATA_WIDTH(32), .SEL_NUM(NUM_WAYS)) 
+way_word_selector (
+    .sel(hit_way),
+    .in(way_hit_words),
+    .out(hit_word)
+);
+
+// 写回数据选择：从待替换的路中选出完整 Cache 行
+selector #(.DATA_WIDTH(WIDTH_CACHE), .SEL_NUM(NUM_WAYS)) 
+way_line_selector (
+    .sel(writeback_way),
+    .in(way_lines),
+    .out(writeback_line)
+);
+\end{lstlisting}
+
+\subsubsection{LFSR 伪随机替换算法}
+
+\begin{lstlisting}[language=Verilog, caption=LFSR 替换算法实现]
+reg [WIDTH_WAY-1:0] replace_way_int;
+
+generate
+if (WIDTH_WAY == 1) begin : width1
+    // 2 路 Cache：简单取反（最优策略）
+    always @(posedge clk) begin
+        if (!resetn)
+            replace_way_int <= 1'b0;
+        else if (lookup2miss)
+            replace_way_int <= ~replace_way_int;
+    end
+end else begin : widthN
+    // >=4 路：基于 LFSR 的伪随机
+    always @(posedge clk) begin
+        if (!resetn)
+            replace_way_int <= 'b1;  // 避免全零死锁
+        else if (lookup2miss)
+            replace_way_int <= {
+                replace_way_int[WIDTH_WAY-2:0],
+                ^replace_way_int  // 异或反馈
+            };
+    end
+end
+endgenerate
+
+// 解码为 one-hot 信号
+decoder #(.WIDTH(WIDTH_WAY)) repl_way_decoder (
+    .in(replace_way_int),
+    .out(replace_way)
+);
+\end{lstlisting}
+
+对于 2 路 Cache，简单的取反策略即为 LRU；对于更多路的情况，使用线性反馈移位寄存器生成伪随机序列。
+
+\subsubsection{写冲突检测}
+
+\begin{lstlisting}[language=Verilog, caption=写冲突检测逻辑]
+// 地址有效位（忽略 Bank 内偏移）
+wire [31-2:0] buf_addr_eff = {buf_tag, buf_index, buf_bank};
+wire [31-2:0] next_addr_eff = {tag, index, bank};
+
+wire write_conflict = 
+    // 情况1：LOOKUP 发现写命中，新请求是读且地址相同
+    (main_state == MAIN_LOOKUP) && buf_isstore && 
+    (buf_addr_eff == next_addr_eff) && next_isload
+    |
+    // 情况2：Write Buffer 正在写，新请求读相同 Bank
+    (wb_state == WB_WRITE) && (bank == wrbuf_bank) && next_isload;
+\end{lstlisting}
+
+写冲突分两种情况：一是 LOOKUP 阶段发现写命中但尚未进入 Write Buffer，此时若新请求读相同地址需要阻塞以保证读后写一致性；二是 Write Buffer 正在写某个 Bank，若新请求读同一 Bank 也需阻塞以避免 Bank RAM 访问冲突。
+
+\subsubsection{AXI 总线接口}
+
+\begin{lstlisting}[language=Verilog, caption=AXI 总线接口信号生成]
+// 读请求
+assign rd_req = (main_state == MAIN_REPLACE) && ~uncached_store;
+assign rd_type = buf_cacheable ? AXI_LINE : AXI_WORD;
+assign rd_addr = buf_cacheable ? 
+    {buf_tag, buf_index, {WIDTH_OFFSET{1'b0}}} :  // Cache 行起始地址
+    {buf_tag, buf_index, buf_offset};              // 非缓存访问地址
+
+// 写请求
+always @(posedge clk) begin
+    if (!resetn)
+        wr_req <= 1'b0;
+    else if (miss2repl && (need_writeback || uncached_store))
+        wr_req <= 1'b1;  // MISS → REPLACE 时发起写请求
+    else if (wr_rdy)
+        wr_req <= 1'b0;  // 写请求被接收后清除
+end
+
+assign wr_type = buf_cacheable ? AXI_LINE : store_axi_type(buf_wstrb);
+assign wr_addr = buf_cacheable ? 
+    {rpbuf_tag, buf_index, {WIDTH_OFFSET{1'b0}}} :  // 脏 Cache 行地址
+    {buf_tag, buf_index, buf_offset};                // 非缓存写地址
+assign wr_data = buf_cacheable ? writeback_line : {96'h0, buf_wdata};
+assign wr_wstrb = buf_cacheable ? 4'b1111 : buf_wstrb;
+
+// 根据字节使能判断非缓存写的类型
+function [2:0] store_axi_type;
+    input [3:0] strb;
+    begin
+        case (strb)
+            4'b1111: store_axi_type = AXI_WORD;
+            4'b0011, 4'b1100: store_axi_type = AXI_HALF;
+            default: store_axi_type = AXI_BYTE;
+        endcase
+    end
+endfunction
+\end{lstlisting}
+
+\subsubsection{握手信号生成}
+
+\begin{lstlisting}[language=Verilog, caption=CPU 握手信号]
+// addr_ok: 请求地址被接收
+assign addr_ok = (main_state == MAIN_IDLE && valid && !write_conflict)
+               | (main_state == MAIN_LOOKUP && valid && !write_conflict && 
+                  (effective_hit || !buf_cacheable));
+
+// data_ok: 数据传输完成
+wire refill_data_ok = (main_state == MAIN_REFILL) && ret_valid && 
+    ~buf_isstore && (buf_cacheable ? (rpbuf_numrecv == buf_bank) : 1'b1);
+wire uncached_store_ok = (main_state == MAIN_REPLACE) && 
+    buf_isstore && !buf_cacheable && wr_rdy;
+
+assign data_ok = (main_state == MAIN_LOOKUP && effective_hit)
+               | (main_state == MAIN_LOOKUP && buf_isstore && buf_cacheable)
+               | refill_data_ok
+               | uncached_store_ok;
+
+// rdata: 读数据返回
+assign rdata = {32{main_state == MAIN_LOOKUP}} & hit_word
+             | {32{main_state == MAIN_REFILL}} & refill_word;
+\end{lstlisting}
+
+握手信号说明：
+\begin{itemize}
+    \item \textbf{addr\_ok}：IDLE 状态可接收新请求；LOOKUP 状态命中时可继续接收
+    \item \textbf{data\_ok}：读命中立即返回；写命中立即放行；读缺失等待对应字返回
+    \item \textbf{rdata}：命中时返回 \verb|hit_word|；缺失时返回 \verb|refill_word|
+\end{itemize}
