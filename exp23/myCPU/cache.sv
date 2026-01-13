@@ -214,7 +214,7 @@ for (i = 0; i < NUM_WAYS; i = i + 1) begin : cache_way
     wire tagv_wen, tagv_en;
 
     assign wtag = cacop_mode0 ? {WIDTH_TAG{1'b0}} : buf_tag;
-    assign wvalid = ~cacop;
+    assign wvalid = ~buf_cacop;
     assign tagv_wen = is_refill && (
         replace_way[i] && buf_cacheable && (~cacop_mode0 && ~cacop_mode1 && ~cacop_mode2)
         || cacop_way[i] && cacop_mode0
@@ -384,7 +384,7 @@ selector #(
     .out(refill_word)
 );
 
-wire need_writeback = writeback_valid && writeback_dirty && buf_cacheable && (!cacop || (cacop_mode1 || cacop_mode2));
+wire need_writeback = writeback_valid && writeback_dirty && buf_cacheable && (!buf_cacop || (cacop_mode1 || cacop_mode2));
 
 /***************** PROCESSING *****************/
 
@@ -502,7 +502,7 @@ decoder #(
     .out(replace_way)
 );
 
-assign writeback_way = (cacop && (cacop_mode1 || cacop_mode2)) ? hit_way : replace_way;
+assign writeback_way = (buf_cacop && (cacop_mode1 || cacop_mode2)) ? hit_way : replace_way;
 
 /***************** STATE TRANSFER *****************/
 
