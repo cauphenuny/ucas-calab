@@ -386,7 +386,7 @@ module stage_id(
     wire [4:0] invtlb_op = inst[4:0];  // INVTLB operation code
 
     // CACOP
-    assign inst_cacop_raw = ~ex_valid_r & ({op_31_26_d, op_25_22_d} == 10'b0000011000);
+    assign inst_cacop_raw = ~ex_valid_r & op_31_26_d[6'b000001] & op_25_22_d[4'b1000];
     wire [4:0] cacop_code = inst[4:0];
     assign cacop_code_valid = (cacop_code[2:0] == 3'b0 || cacop_code[2:0] == 3'b1) && (cacop_code[4:3] == 2'd0 || cacop_code[4:3] == 2'd1 || cacop_code[4:3] == 2'd2);
     assign inst_cacop = inst_cacop_raw & cacop_code_valid;
