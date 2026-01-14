@@ -1,3 +1,7 @@
 \subsection{exp23}
 
-\subsubsection{}
+\subsubsection{data_ok 信号问题}
+
+对于 CACOP，我们的实现方式是将其视为普通的访存操作，然而访存操作会发出 data_ok 信号，干扰 IF 阶段的正常取值
+
+因此，在 Cache 的 data_ok 信号生成逻辑中，我们需要排除 CACOP 指令的影响。

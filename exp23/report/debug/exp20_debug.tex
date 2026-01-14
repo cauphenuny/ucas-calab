@@ -1,3 +1,5 @@
 \subsection{exp20}
 
-\subsubsection{}
+\subsubsection{同步ram实现问题}
+
+在实现Cache模块时，我们使用了同步ram来存储Tag和Data。同步ram的读操作需要一个时钟周期才能得到数据，因此在设计Cache的状态机时需要考虑这个延迟，在 \verb|next_state == LOOKUP|时发起读请求。
